@@ -512,11 +512,17 @@ class MMR_Admin {
 		$mode = $this->text( 'mode' ); // dryrun | commit.
 		$merge = $this->bool( 'merge' );
 
+		$json_key = 'mmr_import_json_' . get_current_user_id();
+
 		$json = '';
 		if ( ! empty( $_FILES['import_file']['tmp_name'] ) && is_uploaded_file( $_FILES['import_file']['tmp_name'] ) ) {
 			$json = file_get_contents( $_FILES['import_file']['tmp_name'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		} elseif ( ! empty( $_POST['import_json'] ) ) {
 			$json = wp_unslash( $_POST['import_json'] ); // phpcs:ignore WordPress.Security.NonceVerification, WordPress.Security.ValidatedSanitizedInput
+		} elseif ( ! empty( $_POST['use_stored'] ) ) {
+			// Committing a previously dry-run payload: browsers clear the file
+			// input on reload, so reuse the JSON stashed during the dry run.
+			$json = (string) get_transient( $json_key );
 		}
 
 		$importer = new MMR_Import();
@@ -526,7 +532,17 @@ class MMR_Admin {
 		) );
 
 		// Stash the result for display on the Tools page.
-		set_transient( 'mmr_import_result_' . get_current_user_id(), $result, 5 * MINUTE_IN_SECONDS );
+		set_transient( 'mmr_import_result_' . get_current_user_id(), $result, 30 * MINUTE_IN_SECONDS );
+
+		// Keep the raw JSON around after a clean dry run so the operator can
+		// commit it without re-selecting the file; clear it once committed.
+		if ( 'commit' === $mode ) {
+			delete_transient( $json_key );
+		} elseif ( '' !== $json && empty( $result['error'] ) ) {
+			set_transient( $json_key, $json, 30 * MINUTE_IN_SECONDS );
+			$result['can_commit'] = true;
+			set_transient( 'mmr_import_result_' . get_current_user_id(), $result, 30 * MINUTE_IN_SECONDS );
+		}
 
 		if ( ! empty( $result['blocked'] ) ) {
 			$this->redirect( 'tools', 'import_blocked', array(), true );

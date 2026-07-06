@@ -68,6 +68,18 @@ $is_empty = MMR_DB::is_empty();
 							<?php endforeach; ?>
 						</ul>
 					<?php endif; ?>
+
+					<?php if ( ! empty( $import_result['can_commit'] ) && empty( $import_result['committed'] ) ) : ?>
+						<form method="post" class="mmr-commit-stored">
+							<?php wp_nonce_field( 'mmr_form' ); ?>
+							<input type="hidden" name="mmr_action" value="import_data">
+							<input type="hidden" name="mode" value="commit">
+							<input type="hidden" name="use_stored" value="1">
+							<label><input type="checkbox" name="merge" value="1"> <?php esc_html_e( 'Merge into existing data', 'mm-register' ); ?></label>
+							<p><button type="submit" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Commit this dry-run to the database?', 'mm-register' ) ); ?>');"><?php esc_html_e( 'Commit this import', 'mm-register' ); ?></button></p>
+							<p class="mmr-hint"><?php esc_html_e( 'Uses the file you just dry-ran — no need to re-select it.', 'mm-register' ); ?></p>
+						</form>
+					<?php endif; ?>
 				</div>
 			<?php endif; ?>
 		</div>
