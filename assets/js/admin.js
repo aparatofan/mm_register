@@ -209,7 +209,7 @@
 		slot.setAttribute( 'data-fee', lesson.fee );
 		slot.setAttribute( 'data-note', lesson.note || '' );
 		slot.innerHTML = '';
-		var name = el( 'span', { 'class': 'mmr-slot-name' }, lesson.class_name );
+		var name = el( 'span', { 'class': 'mmr-slot-name', 'title': lesson.class_name }, lesson.class_name );
 		if ( lesson.note ) {
 			var star = el( 'span', { 'class': 'mmr-slot-note', 'title': lesson.note }, '*' );
 			name.appendChild( star );
@@ -324,22 +324,23 @@
 		var name = slot.querySelector( '.mmr-slot-name' );
 		pop.appendChild( el( 'h4', null, name ? name.textContent.replace( '*', '' ) : '' ) );
 
-		var feeLabel = el( 'label', null, 'Fee override (zł)' );
+		// Same field grid as the modals (single column at popover width).
+		function field( labelText, input ) {
+			var wrap = el( 'div', { 'class': 'mmr-field' } );
+			wrap.appendChild( el( 'label', null, labelText ) );
+			wrap.appendChild( input );
+			return wrap;
+		}
+		var grid = el( 'div', { 'class': 'mmr-form-grid' } );
 		var feeInput = el( 'input', { 'type': 'text', 'value': slot.getAttribute( 'data-fee' ) || '' } );
-		feeLabel.appendChild( feeInput );
-		pop.appendChild( feeLabel );
-
-		var noteLabel = el( 'label', null, 'Note' );
+		grid.appendChild( field( 'Fee override (zł)', feeInput ) );
 		var noteInput = el( 'input', { 'type': 'text', 'value': slot.getAttribute( 'data-note' ) || '' } );
-		noteLabel.appendChild( noteInput );
-		pop.appendChild( noteLabel );
-
-		var moveLabel = el( 'label', null, 'Move to date / slot' );
+		grid.appendChild( field( 'Note', noteInput ) );
 		var moveDate = el( 'input', { 'type': 'date', 'value': slot.getAttribute( 'data-date' ) } );
-		moveLabel.appendChild( moveDate );
-		pop.appendChild( moveLabel );
+		grid.appendChild( field( 'Move to date', moveDate ) );
 		var moveSlot = el( 'input', { 'type': 'number', 'min': '1', 'max': String( cfg.slots || 12 ), 'value': slot.getAttribute( 'data-slot' ) } );
-		pop.appendChild( moveSlot );
+		grid.appendChild( field( 'Move to slot', moveSlot ) );
+		pop.appendChild( grid );
 
 		var actions = el( 'div', { 'class': 'mmr-popover-actions' } );
 		var saveBtn = el( 'button', { 'class': 'button button-primary', 'type': 'button' }, 'Save' );

@@ -14,16 +14,26 @@
 	--mmr-neg: #b3261e;
 }
 
+/* Page wrapper: replaces core .wrap — full admin content width, no ceiling. */
 .mmr-wrap {
+	margin: 10px 20px 0 2px;
+	max-width: none;
+	width: auto;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-	max-width: 1400px;
 }
+.mmr-wrap, .mmr-wrap *, .mmr-wrap *::before, .mmr-wrap *::after { box-sizing: border-box; }
+
+.mmr-wrap table { width: 100%; table-layout: fixed; }
+.mmr-wrap table td, .mmr-wrap table th { overflow-wrap: break-word; }
 
 .mmr-page-title {
 	display: flex;
 	align-items: baseline;
 	gap: .6em;
-	margin-bottom: .4em;
+	margin: 0 0 .4em;
+	font-size: 23px;
+	font-weight: 400;
+	line-height: 1.3;
 }
 .mmr-week-range {
 	font-size: 14px;
@@ -43,6 +53,7 @@
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 12px;
+	width: 100%;
 	margin: 12px 0;
 	padding: 8px 10px;
 	background: var(--mmr-bg-soft);
@@ -62,14 +73,18 @@
 .mmr-total-chip strong { font-variant-numeric: tabular-nums; }
 .mmr-total-month strong { color: var(--mmr-accent); }
 
-/* Calendar grid ------------------------------------------------------- */
+/* Calendar grid --------------------------------------------------------
+   minmax(0, 1fr) is mandatory: plain 1fr lets long class names push
+   columns past the container and cause horizontal scroll. */
 .mmr-grid {
 	display: grid;
-	grid-template-columns: repeat(var(--mmr-cols, 5), 1fr);
-	gap: 6px;
+	grid-template-columns: repeat(var(--mmr-cols, 5), minmax(0, 1fr));
+	gap: 12px;
+	width: 100%;
 	margin-top: 8px;
 }
 .mmr-col {
+	min-width: 0;
 	border: 1px solid var(--mmr-border);
 	border-radius: 6px;
 	overflow: hidden;
@@ -103,7 +118,7 @@
 .mmr-slot.is-empty { color: #c3c9d2; }
 .mmr-slot.is-empty .mmr-slot-plus { font-size: 14px; }
 .mmr-slot.is-filled { background: #fff; }
-.mmr-slot-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mmr-slot-name { min-width: 0; flex: 1 1 auto; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mmr-slot-note { color: var(--mmr-accent); margin-left: 2px; }
 .mmr-slot-fee { color: var(--mmr-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mmr-col-total {
@@ -174,9 +189,10 @@
 	padding: 12px;
 }
 .mmr-popover h4 { margin: 0 0 8px; }
-.mmr-popover label { display: block; font-size: 12px; margin-bottom: 8px; }
-.mmr-popover input, .mmr-popover select { width: 100%; box-sizing: border-box; }
-.mmr-popover-actions { display: flex; justify-content: space-between; gap: 6px; margin-top: 6px; }
+/* The popover uses the same .mmr-form-grid/.mmr-field system as the modals,
+   collapsed to a single column at its narrow width. */
+.mmr-popover .mmr-form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mmr-popover-actions { display: flex; justify-content: space-between; gap: 6px; margin-top: 12px; }
 
 /* Tables -------------------------------------------------------------- */
 .mmr-table { margin-top: 8px; }
