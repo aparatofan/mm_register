@@ -195,6 +195,9 @@
 .mmr-subtable th, .mmr-subtable td { padding: 4px 8px; border-bottom: 1px solid var(--mmr-border); font-size: 12px; text-align: left; }
 
 .mmr-settle-row td { vertical-align: top; }
+.mmr-section-title { margin: 24px 0 8px; }
+.mmr-table-scroll { overflow-x: auto; }
+.mmr-foot-label { text-align: right; }
 
 .mmr-filterbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
 

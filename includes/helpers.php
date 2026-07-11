@@ -56,21 +56,6 @@ function mmr_sanitize_period( $period ) {
 }
 
 /**
- * Return the period (`YYYY-MM`) that the settlement screen should default to:
- * previous month before the 10th, otherwise current month.
- *
- * @return string
- */
-function mmr_default_settlement_period() {
-	$now = current_time( 'timestamp' );
-	$day = (int) wp_date( 'j', $now );
-	if ( $day < 10 ) {
-		return wp_date( 'Y-m', strtotime( 'first day of last month', $now ) );
-	}
-	return wp_date( 'Y-m', $now );
-}
-
-/**
  * Human month label from a period, e.g. `2026-07` → `lipiec 2026`.
  * Uses Polish month names regardless of site locale for consistency.
  *

@@ -506,6 +506,87 @@
 				}
 			}
 		} );
+
+		initSummaryExport();
+	}
+
+	/* Copy / CSV export of the per-student summary. */
+
+	function summaryData() {
+		var node = document.getElementById( 'mmr-settlement-summary-data' );
+		if ( ! node ) { return null; }
+		try {
+			return JSON.parse( node.textContent );
+		} catch ( err ) {
+			return null;
+		}
+	}
+
+	function summaryFeedback( message ) {
+		var out = document.getElementById( 'mmr-copy-feedback' );
+		if ( ! out ) { return; }
+		out.textContent = message;
+		setTimeout( function () { out.textContent = ''; }, 3000 );
+	}
+
+	function initSummaryExport() {
+		var copyBtn = document.getElementById( 'mmr-copy-summary' );
+		var csvBtn = document.getElementById( 'mmr-download-csv' );
+		if ( ! copyBtn && ! csvBtn ) { return; }
+
+		if ( copyBtn ) {
+			copyBtn.addEventListener( 'click', function () {
+				var data = summaryData();
+				if ( ! data ) { return; }
+				// Tab-separated with display formatting — pastes cleanly into a sheet.
+				var lines = [ data.headers.join( '\t' ) ];
+				data.rows.forEach( function ( r ) {
+					lines.push( [ r.student, r.lessons, formatMoney( r.lesson_total ), formatMoney( r.tbt ), formatMoney( r.to_bill ) ].join( '\t' ) );
+				} );
+				lines.push( [ 'TOTAL', '', '', '', formatMoney( data.total ) ].join( '\t' ) );
+				var text = lines.join( '\n' );
+				if ( navigator.clipboard && navigator.clipboard.writeText ) {
+					navigator.clipboard.writeText( text ).then( function () {
+						summaryFeedback( 'Copied.' );
+					}, function () {
+						summaryFeedback( i18n.error || 'Error' );
+					} );
+				} else {
+					var ta = document.createElement( 'textarea' );
+					ta.value = text;
+					document.body.appendChild( ta );
+					ta.select();
+					document.execCommand( 'copy' );
+					ta.remove();
+					summaryFeedback( 'Copied.' );
+				}
+			} );
+		}
+
+		if ( csvBtn ) {
+			csvBtn.addEventListener( 'click', function () {
+				var data = summaryData();
+				if ( ! data ) { return; }
+				function esc( value ) {
+					var s = String( value );
+					return /[",\n]/.test( s ) ? '"' + s.replace( /"/g, '""' ) + '"' : s;
+				}
+				var lines = [ data.headers.map( esc ).join( ',' ) ];
+				data.rows.forEach( function ( r ) {
+					lines.push( [ esc( r.student ), r.lessons, Number( r.lesson_total ).toFixed( 2 ), Number( r.tbt ).toFixed( 2 ), Number( r.to_bill ).toFixed( 2 ) ].join( ',' ) );
+				} );
+				lines.push( [ 'TOTAL', '', '', '', Number( data.total ).toFixed( 2 ) ].join( ',' ) );
+				// BOM so Excel opens the UTF-8 file with Polish characters intact.
+				var blob = new Blob( [ '\uFEFF' + lines.join( '\r\n' ) ], { type: 'text/csv;charset=utf-8' } );
+				var a = document.createElement( 'a' );
+				a.href = URL.createObjectURL( blob );
+				a.download = 'settlement-' + data.period + '.csv';
+				document.body.appendChild( a );
+				a.click();
+				a.remove();
+				URL.revokeObjectURL( a.href );
+			} );
+		}
 	}
 
 	/* ---------------------------------------------------------------
