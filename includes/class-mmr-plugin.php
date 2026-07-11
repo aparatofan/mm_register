@@ -62,12 +62,10 @@ class MMR_Plugin {
 	}
 
 	/**
-	 * Run dbDelta if the plugin was updated without re-activation.
+	 * Run the DB upgrade routine if the plugin was updated without re-activation.
 	 */
 	public function maybe_upgrade() {
-		if ( get_option( 'mmr_db_version' ) !== MMR_VERSION ) {
-			MMR_DB::install();
-		}
+		MMR_DB::maybe_upgrade();
 	}
 
 	/**
