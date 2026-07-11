@@ -510,112 +510,8 @@
 					splitRow.hidden = ! splitRow.hidden;
 					toggle.setAttribute( 'aria-expanded', String( ! splitRow.hidden ) );
 				}
-				return;
-			}
-
-			var recBtn = e.target.closest( '.mmr-record-settlement' );
-			if ( recBtn ) {
-				e.preventDefault();
-				openSettlementModal( JSON.parse( recBtn.getAttribute( 'data-json' ) ) );
 			}
 		} );
-
-		var perMember = document.getElementById( 'mmr-per-member' );
-		if ( perMember ) {
-			perMember.addEventListener( 'change', function () {
-				toggleSettlementMode( perMember.checked );
-			} );
-		}
-	}
-
-	function toggleSettlementMode( isPerMember ) {
-		var single = document.getElementById( 'mmr-settle-single' );
-		var pm = document.getElementById( 'mmr-settle-permember' );
-		if ( single ) {
-			single.hidden = isPerMember;
-			single.querySelectorAll( 'input, textarea, select' ).forEach( function ( f ) { f.disabled = isPerMember; } );
-		}
-		if ( pm ) {
-			pm.hidden = ! isPerMember;
-			pm.querySelectorAll( 'input, textarea, select' ).forEach( function ( f ) { f.disabled = ! isPerMember; } );
-		}
-	}
-
-	function openSettlementModal( data ) {
-		var modal = document.getElementById( 'mmr-settlement-modal' );
-		if ( ! modal ) { return; }
-		var form = modal.querySelector( 'form' );
-		resetForm( form );
-		form.querySelector( '[data-field="class_id"]' ).value = data.class_id;
-		var payer = form.querySelector( '[data-field="payer_label"]' );
-		if ( payer ) { payer.value = data.class_name; }
-		var amount = form.querySelector( '[data-field="amount"]' );
-		if ( amount ) { amount.value = Number( data.amount ).toFixed( 2 ); }
-		document.getElementById( 'mmr-settle-class' ).textContent = data.class_name;
-
-		// Per-member rows.
-		var pmRows = document.getElementById( 'mmr-settle-members-rows' );
-		var toggleWrap = modal.querySelector( '.mmr-per-member-toggle' );
-		pmRows.innerHTML = '';
-		if ( data.is_group && data.members && data.members.length ) {
-			toggleWrap.hidden = false;
-			data.members.forEach( function ( m ) {
-				var tr = el( 'tr' );
-				var td1 = el( 'td' );
-				td1.appendChild( el( 'span', null, m.student_name ) );
-				td1.appendChild( el( 'input', { 'type': 'hidden', 'name': 'member_name[]', 'value': m.student_name } ) );
-				var td2 = el( 'td' );
-				var amt = el( 'input', { 'type': 'text', 'name': 'member_amount[]', 'value': Number( m.total ).toFixed( 2 ) } );
-				td2.appendChild( amt );
-				tr.appendChild( td1 );
-				tr.appendChild( td2 );
-				pmRows.appendChild( tr );
-			} );
-		} else {
-			toggleWrap.hidden = true;
-		}
-		var perMember = document.getElementById( 'mmr-per-member' );
-		if ( perMember ) { perMember.checked = false; }
-		toggleSettlementMode( false );
-
-		openModal( modal );
-	}
-
-	/* ---------------------------------------------------------------
-	 * Receivables inline toggles
-	 * ------------------------------------------------------------- */
-
-	function initReceivables() {
-		var table = document.querySelector( '.mmr-receivables-table' );
-		if ( ! table ) { return; }
-		table.addEventListener( 'change', function ( e ) {
-			var toggle = e.target.closest( '.mmr-toggle' );
-			if ( ! toggle ) { return; }
-			var row = toggle.closest( 'tr' );
-			var id = row.getAttribute( 'data-id' );
-			var field = toggle.getAttribute( 'data-field' );
-			ajax( 'mmr_toggle_settlement', { id: id, field: field, value: toggle.checked ? 1 : 0 } ).then( function ( res ) {
-				if ( res && res.success ) {
-					var totalEl = document.getElementById( 'mmr-unpaid-total' );
-					if ( totalEl ) { totalEl.textContent = res.data.unpaid_total; }
-					if ( field === 'paid' ) {
-						var cell = row.querySelector( '.mmr-paid-on' );
-						if ( cell ) { cell.textContent = res.data.paid_on ? formatDate( res.data.paid_on ) : '—'; }
-						row.classList.toggle( 'mmr-paid', toggle.checked );
-						row.classList.toggle( 'mmr-unpaid', ! toggle.checked );
-					}
-				} else {
-					toggle.checked = ! toggle.checked;
-					alert( i18n.error || 'Error' );
-				}
-			} );
-		} );
-	}
-
-	function formatDate( ymd ) {
-		var p = String( ymd ).split( '-' );
-		if ( p.length === 3 ) { return parseInt( p[ 2 ], 10 ) + '.' + parseInt( p[ 1 ], 10 ) + '.' + p[ 0 ]; }
-		return ymd;
 	}
 
 	/* ---------------------------------------------------------------
@@ -627,7 +523,6 @@
 		initMembersRepeater();
 		initCalendar();
 		initSettlement();
-		initReceivables();
 	} );
 
 } )();

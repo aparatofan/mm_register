@@ -24,7 +24,6 @@ class MMR_Ajax {
 			'mmr_update_lesson',
 			'mmr_delete_lesson',
 			'mmr_copy_week',
-			'mmr_toggle_settlement',
 		);
 		foreach ( $actions as $action ) {
 			add_action( 'wp_ajax_' . $action, array( $this, $action ) );
@@ -172,45 +171,6 @@ class MMR_Ajax {
 			$copied++;
 		}
 		wp_send_json_success( array( 'copied' => $copied, 'skipped' => $skipped ) );
-	}
-
-	/**
-	 * Inline toggle for a settlement flag (ksef/sent/paid) from Receivables.
-	 */
-	public function mmr_toggle_settlement() {
-		$this->guard();
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$field = isset( $_POST['field'] ) ? sanitize_key( wp_unslash( $_POST['field'] ) ) : '';
-		$value = isset( $_POST['value'] ) ? (int) $_POST['value'] : 0;
-		if ( ! in_array( $field, array( 'ksef', 'sent', 'paid' ), true ) ) {
-			wp_send_json_error( array( 'message' => 'bad_field' ), 400 );
-		}
-		$row = MMR_Data::settlement_row( $id );
-		if ( ! $row ) {
-			wp_send_json_error( array( 'message' => 'not_found' ), 404 );
-		}
-
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		$update = array( $field => $value ? 1 : 0 );
-		$formats = array( '%d' );
-		$paid_on = $row->paid_on;
-		if ( 'paid' === $field ) {
-			if ( $value ) {
-				$paid_on = current_time( 'Y-m-d' );
-				$update['paid_on'] = $paid_on;
-			} else {
-				$paid_on = null;
-				$update['paid_on'] = null;
-			}
-			$formats[] = '%s';
-		}
-		$wpdb->update( $t, $update, array( 'id' => $id ), $formats, array( '%d' ) );
-
-		wp_send_json_success( array(
-			'unpaid_total' => mmr_money( MMR_Data::unpaid_total() ),
-			'paid_on'      => $paid_on,
-		) );
 	}
 
 	/**

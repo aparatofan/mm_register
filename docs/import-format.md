@@ -15,19 +15,17 @@ The importer is:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "students": [],
   "classes": [],
-  "lessons": [],
-  "settlements": [],
-  "budget_items": [],
-  "recurring_expenses": [],
-  "projections": []
+  "lessons": []
 }
 ```
 
 Every top-level key is optional; a missing array is treated as empty. Order in
 the file does not matter — the importer resolves cross-references itself.
+Since v2 of the plugin only students, classes (with members) and lessons are
+imported; any other top-level keys are ignored.
 
 ## References (`ref`)
 
@@ -37,7 +35,7 @@ Because real database IDs are unknown before import, entities are linked by
 - A `student` may carry a `ref` (any unique string, e.g. `"s_jakub"`).
 - A `class` may carry a `ref` (e.g. `"c_psych12"`).
 - Class members link to a student via `student_ref`.
-- Lessons and settlements link to a class via `class_ref`.
+- Lessons link to a class via `class_ref`.
 
 As a fallback, if a `ref` is omitted, the entity **name** is used as its
 reference. So a lesson may reference a class either by `class_ref` or by
@@ -120,67 +118,6 @@ One entry per booked lesson. **The fee printed in the sheet becomes
 Member share snapshots are computed at import time from the class members and
 `fee_snapshot`, so later membership changes never rewrite past months.
 
-## `settlements`
-
-Maps the SETTLEMENT sheet verbatim.
-
-| field | type | notes |
-|---|---|---|
-| `doc_type` | string | `invoice` / `rachunek` / `revolut` / other / blank |
-| `doc_number` | string | e.g. `eFA/2026/07/01/4/KSeF`, `158/2025`, or empty |
-| `doc_date` | string | `YYYY-MM-DD` (convert Excel serials beforehand) |
-| `payer_label` | string | free text — not a hard class link |
-| `class_ref` | string \| null | optional link back to a class |
-| `period` | string \| null | `YYYY-MM` the settlement covers |
-| `amount` | number | |
-| `ksef` | boolean | |
-| `sent` | boolean | |
-| `paid` | boolean | |
-| `paid_on` | string \| null | `YYYY-MM-DD` |
-| `notes` | string | optional |
-
-## `budget_items`
-
-Maps the BUDGET sheet's left column.
-
-| field | type | notes |
-|---|---|---|
-| `label` | string | e.g. `CASH`, `mKonto`, `Bitcoin`, `card debt`, `rainy day` |
-| `amount` | number | |
-| `kind` | `"asset"` \| `"liability"` \| `"reserve"` \| `"note_only"` | |
-| `sort_order` | integer | optional |
-| `notes` | string | optional |
-
-Suggested mapping: assets — CASH, mKonto, BUSINESS ACC, OSZCZĘDNOŚCIOWE,
-Revolut ×4, Euros in cash, Bitcoin; liability — card debt; reserves — rainy day
-(20 000), Chiny Rowerem (3 000).
-
-## `recurring_expenses`
-
-| field | type | notes |
-|---|---|---|
-| `title` | string | |
-| `projected` | number | |
-| `pay_type` | `"manual"` \| `"subscription"` | |
-| `frequency` | `"monthly"` \| `"yearly"` | |
-| `category` | `"critical"` \| `"moderate"` \| `"whim"` | |
-| `due_note` | string | e.g. `20 dnia`, `Ania dorzuca połowę` |
-| `active` | boolean | |
-| `payments` | array | optional current-month payment rows |
-
-Each `payments` entry: `{ "period": "YYYY-MM", "spent": number, "paid_on": "YYYY-MM-DD" }`.
-
-## `projections`
-
-| field | type | notes |
-|---|---|---|
-| `period` | string | `YYYY-MM` (unique) |
-| `projected` | number | projected revenue |
-| `expenses` | number | projected expenses |
-| `notes` | string | optional |
-
-Actual revenue is **not** imported — it is computed live from lessons.
-
 ---
 
 ## Export
@@ -189,9 +126,9 @@ The Tools → Export button produces a JSON file in exactly this format (with
 `ref` values auto-generated as `s{id}` / `c{id}`), so an export can be
 re-imported into an empty install and re-link correctly.
 
-## Validation checklist (spec §10)
+## Validation checklist
 
-- A full import of `REGISTER_2026` should dry-run cleanly and produce matching
-  month totals for Jan–Jun 2026 (spot-check e.g. JUNE total `14 970`).
+- A full import should dry-run cleanly and produce matching month totals on
+  the Settlement page for every imported month.
 - Because fees are snapshotted per lesson, changing a class fee afterwards must
   not alter past-month totals.

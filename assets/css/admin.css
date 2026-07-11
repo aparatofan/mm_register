@@ -196,35 +196,10 @@
 
 .mmr-settle-row td { vertical-align: top; }
 
-/* Cards --------------------------------------------------------------- */
-.mmr-cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
-.mmr-card {
-	flex: 1 1 160px;
-	padding: 12px 14px;
-	background: #fff;
-	border: 1px solid var(--mmr-border);
-	border-radius: 6px;
-}
-.mmr-card-accent { border-color: var(--mmr-accent); background: var(--mmr-accent-soft); }
-.mmr-card-label { font-size: 12px; color: var(--mmr-muted); }
-.mmr-card-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
-
 .mmr-filterbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
 
-/* Budget -------------------------------------------------------------- */
-.mmr-budget-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: start; }
-.mmr-budget-summary { position: sticky; top: 40px; }
 .mmr-summary-table { width: 100%; border-collapse: collapse; }
 .mmr-summary-table td { padding: 6px 4px; border-bottom: 1px solid var(--mmr-border); font-size: 13px; }
-.mmr-summary-strong td { font-weight: 700; background: var(--mmr-bg-soft); }
-.mmr-summary-final td { font-weight: 700; font-size: 15px; color: var(--mmr-accent); border-top: 2px solid var(--mmr-accent); }
-
-/* Expenses ------------------------------------------------------------ */
-.mmr-markpaid { display: inline-flex; gap: 4px; align-items: center; }
-.mmr-cat { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-.mmr-cat-critical { background: #fce8e6; color: var(--mmr-neg); }
-.mmr-cat-moderate { background: #fef7e0; color: #8a6d00; }
-.mmr-cat-whim { background: #e8f0fe; color: var(--mmr-accent); }
 
 /* Quick add ----------------------------------------------------------- */
 .mmr-quickadd {
@@ -281,7 +256,6 @@
 
 /* Mobile -------------------------------------------------------------- */
 @media (max-width: 782px) {
-	.mmr-budget-layout { grid-template-columns: 1fr; }
 	.mmr-day-tabs { display: flex; }
 	.mmr-grid { grid-template-columns: 1fr; }
 	.mmr-col { display: none; }

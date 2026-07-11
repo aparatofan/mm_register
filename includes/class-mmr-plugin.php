@@ -85,24 +85,16 @@ class MMR_Plugin {
 		);
 
 		$pages = array(
-			'calendar'          => __( 'Calendar', 'mm-register' ),
-			'settlement'        => __( 'Settlement', 'mm-register' ),
-			'receivables'       => __( 'Receivables', 'mm-register' ),
-			'students-classes'  => __( 'Students & Classes', 'mm-register' ),
-			'budget'            => __( 'Budget', 'mm-register' ),
-			'expenses'          => __( 'Expenses', 'mm-register' ),
-			'projections'       => __( 'Projections', 'mm-register' ),
-			'tools'             => __( 'Tools', 'mm-register' ),
+			'calendar'         => __( 'Calendar', 'mm-register' ),
+			'settlement'       => __( 'Settlement', 'mm-register' ),
+			'students-classes' => __( 'Students & Classes', 'mm-register' ),
+			'tools'            => __( 'Tools', 'mm-register' ),
 		);
 
 		$callbacks = array(
 			'calendar'         => 'render_calendar',
 			'settlement'       => 'render_settlement',
-			'receivables'      => 'render_receivables',
 			'students-classes' => 'render_students_classes',
-			'budget'           => 'render_budget',
-			'expenses'         => 'render_expenses',
-			'projections'      => 'render_projections',
 			'tools'            => 'render_tools',
 		);
 
