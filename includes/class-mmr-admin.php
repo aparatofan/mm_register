@@ -85,6 +85,11 @@ class MMR_Admin {
 	}
 
 	/** @return void */
+	public function render_companies() {
+		$this->render( 'companies.php' );
+	}
+
+	/** @return void */
 	public function render_tools() {
 		$this->render( 'tools.php' );
 	}
@@ -112,6 +117,8 @@ class MMR_Admin {
 			'save_class'            => 'post_save_class',
 			'toggle_class_status'   => 'post_toggle_class_status',
 			'quick_add_1on1'        => 'post_quick_add_1on1',
+			'save_company'          => 'post_save_company',
+			'toggle_company_status' => 'post_toggle_company_status',
 			'import_data'           => 'post_import_data',
 			'export_data'           => 'post_export_data',
 			'wipe_data'             => 'post_wipe_data',
@@ -189,7 +196,7 @@ class MMR_Admin {
 	 */
 	protected function filter_args() {
 		$args = array();
-		foreach ( array( 's', 'status', 'client_type' ) as $key ) {
+		foreach ( array( 's', 'status', 'client_type', 'company_id' ) as $key ) {
 			$value = $this->text( 'filter_' . $key );
 			if ( '' !== $value ) {
 				$args[ $key ] = $value;
@@ -201,9 +208,14 @@ class MMR_Admin {
 	/** Save a student. */
 	protected function post_save_student() {
 		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$email = trim( $this->text( 'email' ) );
+		$email_2 = trim( $this->text( 'email_2' ) );
 		$data = array(
 			'name'            => $this->text( 'name' ),
-			'email'           => sanitize_email( $this->text( 'email' ) ),
+			'email'           => '' === $email ? '' : sanitize_email( $email ),
+			'email_2'         => '' === $email_2 ? '' : sanitize_email( $email_2 ),
+			'phone'           => $this->text( 'phone' ),
+			'level'           => $this->text( 'level' ),
 			'tbt_monthly_fee' => $this->money( 'tbt_monthly_fee' ),
 			'notes'           => $this->textarea( 'notes' ),
 			'status'          => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
@@ -225,18 +237,39 @@ class MMR_Admin {
 		$this->redirect( 'students', 'saved', $this->filter_args() );
 	}
 
+	/**
+	 * Resolve the class form's Company field to a company_id.
+	 * Empty name → 0 (no company). A non-empty name must match an existing
+	 * company (any status, case-insensitive); otherwise null signals rejection.
+	 *
+	 * @return int|null 0 = none, >0 = resolved id, null = unknown name.
+	 */
+	protected function resolve_company() {
+		$name = $this->text( 'company' );
+		if ( '' === $name ) {
+			return 0;
+		}
+		$company = MMR_Data::company_by_name( $name );
+		return $company ? (int) $company->id : null;
+	}
+
 	/** Save a class + its members. */
 	protected function post_save_class() {
 		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+
+		$company_id = $this->resolve_company();
+		if ( null === $company_id ) {
+			$this->redirect( 'classes', 'Unknown company — add it on the Companies page first.', array(), true );
+		}
+
 		$data = array(
 			'name'          => $this->text( 'name' ),
 			'fee'           => $this->money( 'fee' ),
 			'client_type'   => $this->text( 'client_type' ),
-			'venue'         => $this->text( 'venue' ),
 			'settle_method' => $this->text( 'settle_method' ),
+			'company_id'    => $company_id,
 			'notes'         => $this->textarea( 'notes' ),
 			'status'        => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
-			'sort_name'     => $this->text( 'sort_name' ),
 		);
 		if ( '' === $data['name'] ) {
 			$this->redirect( 'classes', 'Name is required.', array(), true );
@@ -292,14 +325,45 @@ class MMR_Admin {
 			'name'          => $name,
 			'fee'           => $fee,
 			'client_type'   => 'private',
-			'venue'         => $this->text( 'venue' ),
 			'settle_method' => $this->text( 'settle_method' ),
+			'company_id'    => 0,
 			'notes'         => '',
 			'status'        => 'active',
-			'sort_name'     => '',
 		) );
 		MMR_Data::set_members( $class_id, array( array( 'student_id' => $student_id, 'share' => null ) ) );
 		$this->redirect( 'classes', 'saved' );
+	}
+
+	/* --- Companies ----------------------------------------------------- */
+
+	/** Save a company. */
+	protected function post_save_company() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$name = $this->text( 'name' );
+		if ( '' === $name ) {
+			$this->redirect( 'companies', 'Name is required.', array(), true );
+		}
+		if ( MMR_Data::company_by_name( $name, $id ) ) {
+			$this->redirect( 'companies', 'A company with that name already exists.', array(), true );
+		}
+		MMR_Data::save_company( array(
+			'name'    => $name,
+			'address' => $this->textarea( 'address' ),
+			'nip'     => $this->text( 'nip' ),
+			'notes'   => $this->textarea( 'notes' ),
+			'status'  => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
+		), $id );
+		$this->redirect( 'companies', 'saved' );
+	}
+
+	/** Archive / restore a company. */
+	protected function post_toggle_company_status() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$status = ( 'archived' === $this->text( 'status' ) ) ? 'archived' : 'active';
+		if ( $id ) {
+			MMR_Data::set_company_status( $id, $status );
+		}
+		$this->redirect( 'companies', 'saved', $this->filter_args() );
 	}
 
 	/* --- Tools --------------------------------------------------------- */

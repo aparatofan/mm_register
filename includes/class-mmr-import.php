@@ -50,9 +50,10 @@ class MMR_Import {
 			// Still compute counts so the operator sees what would be imported.
 		}
 
-		$students = isset( $data['students'] ) && is_array( $data['students'] ) ? $data['students'] : array();
-		$classes  = isset( $data['classes'] ) && is_array( $data['classes'] ) ? $data['classes'] : array();
-		$lessons  = isset( $data['lessons'] ) && is_array( $data['lessons'] ) ? $data['lessons'] : array();
+		$companies = isset( $data['companies'] ) && is_array( $data['companies'] ) ? $data['companies'] : array();
+		$students  = isset( $data['students'] ) && is_array( $data['students'] ) ? $data['students'] : array();
+		$classes   = isset( $data['classes'] ) && is_array( $data['classes'] ) ? $data['classes'] : array();
+		$lessons   = isset( $data['lessons'] ) && is_array( $data['lessons'] ) ? $data['lessons'] : array();
 
 		// Build the set of known class refs / names for warning detection.
 		$class_refs = array();
@@ -74,6 +75,7 @@ class MMR_Import {
 		}
 
 		$result['counts'] = array(
+			'companies'   => count( $companies ),
 			'students'    => count( $students ),
 			'classes'     => count( $classes ),
 			'memberships' => $membership_count,
@@ -116,7 +118,7 @@ class MMR_Import {
 		}
 
 		// ---- Commit ----
-		$this->commit( $students, $classes, $lessons, $result );
+		$this->commit( $companies, $students, $classes, $lessons, $result );
 		$result['committed'] = true;
 		return $result;
 	}
@@ -140,15 +142,37 @@ class MMR_Import {
 	/**
 	 * Perform the actual writes, resolving refs to real IDs.
 	 *
-	 * @param array $students Students.
-	 * @param array $classes  Classes.
-	 * @param array $lessons  Lessons.
-	 * @param array $result   Result accumulator (by reference).
+	 * @param array $companies Companies.
+	 * @param array $students  Students.
+	 * @param array $classes   Classes.
+	 * @param array $lessons   Lessons.
+	 * @param array $result    Result accumulator (by reference).
 	 */
-	protected function commit( $students, $classes, $lessons, &$result ) {
+	protected function commit( $companies, $students, $classes, $lessons, &$result ) {
+		$company_map = array(); // ref/name => id.
 		$student_map = array(); // ref/name => id.
 		$class_map = array();    // ref/name => id.
 		$imported = array_fill_keys( array_keys( $result['counts'] ), 0 );
+
+		// Companies first, so classes can resolve their company link.
+		foreach ( $companies as $company ) {
+			$name = isset( $company['name'] ) ? sanitize_text_field( $company['name'] ) : '';
+			if ( '' === $name ) {
+				continue;
+			}
+			$id = MMR_Data::save_company( array(
+				'name'    => $name,
+				'address' => isset( $company['address'] ) ? sanitize_textarea_field( $company['address'] ) : '',
+				'nip'     => isset( $company['nip'] ) ? sanitize_text_field( $company['nip'] ) : '',
+				'notes'   => isset( $company['notes'] ) ? sanitize_textarea_field( $company['notes'] ) : '',
+				'status'  => ( isset( $company['status'] ) && 'archived' === $company['status'] ) ? 'archived' : 'active',
+			) );
+			if ( isset( $company['ref'] ) ) {
+				$company_map[ (string) $company['ref'] ] = $id;
+			}
+			$company_map[ $name ] = $id;
+			$imported['companies']++;
+		}
 
 		// Students.
 		foreach ( $students as $student ) {
@@ -159,6 +183,9 @@ class MMR_Import {
 			$id = MMR_Data::save_student( array(
 				'name'            => $name,
 				'email'           => isset( $student['email'] ) ? sanitize_email( $student['email'] ) : '',
+				'email_2'         => isset( $student['email_2'] ) ? sanitize_email( $student['email_2'] ) : '',
+				'phone'           => isset( $student['phone'] ) ? sanitize_text_field( $student['phone'] ) : '',
+				'level'           => isset( $student['level'] ) ? sanitize_text_field( $student['level'] ) : '',
 				'tbt_monthly_fee' => isset( $student['tbt_monthly_fee'] ) ? mmr_sanitize_money( $student['tbt_monthly_fee'] ) : 0,
 				'notes'           => isset( $student['notes'] ) ? sanitize_textarea_field( $student['notes'] ) : '',
 				'status'          => ( isset( $student['status'] ) && 'archived' === $student['status'] ) ? 'archived' : 'active',
@@ -176,15 +203,18 @@ class MMR_Import {
 			if ( '' === $name ) {
 				continue;
 			}
+			// Resolve the class's company link (by ref or name), if any.
+			$cref = isset( $class['company_ref'] ) ? (string) $class['company_ref'] : ( isset( $class['company'] ) ? (string) $class['company'] : '' );
+			$company_id = ( '' !== $cref && isset( $company_map[ $cref ] ) ) ? $company_map[ $cref ] : 0;
+
 			$id = MMR_Data::save_class( array(
 				'name'          => $name,
 				'fee'           => isset( $class['fee'] ) ? mmr_sanitize_money( $class['fee'] ) : 0,
 				'client_type'   => isset( $class['client_type'] ) ? sanitize_text_field( $class['client_type'] ) : '',
-				'venue'         => isset( $class['venue'] ) ? sanitize_text_field( $class['venue'] ) : '',
 				'settle_method' => isset( $class['settle_method'] ) ? sanitize_text_field( $class['settle_method'] ) : '',
+				'company_id'    => $company_id,
 				'notes'         => isset( $class['notes'] ) ? sanitize_textarea_field( $class['notes'] ) : '',
 				'status'        => ( isset( $class['status'] ) && 'archived' === $class['status'] ) ? 'archived' : 'active',
-				'sort_name'     => isset( $class['sort_name'] ) ? sanitize_text_field( $class['sort_name'] ) : '',
 			) );
 			if ( isset( $class['ref'] ) ) {
 				$class_map[ (string) $class['ref'] ] = $id;
@@ -239,13 +269,28 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 2,
+			'version'        => 3,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
+			'companies'      => array(),
 			'students'       => array(),
 			'classes'        => array(),
 			'lessons'        => array(),
 		);
+
+		$company_ref = array();
+		foreach ( MMR_Data::companies( array( 'status' => 'all' ) ) as $co ) {
+			$ref = 'co' . $co->id;
+			$company_ref[ (int) $co->id ] = $ref;
+			$out['companies'][] = array(
+				'ref'     => $ref,
+				'name'    => $co->name,
+				'address' => $co->address,
+				'nip'     => $co->nip,
+				'notes'   => $co->notes,
+				'status'  => $co->status,
+			);
+		}
 
 		$student_ref = array();
 		foreach ( MMR_Data::students( array( 'status' => 'all' ) ) as $s ) {
@@ -255,6 +300,9 @@ class MMR_Import {
 				'ref'             => $ref,
 				'name'            => $s->name,
 				'email'           => $s->email,
+				'email_2'         => $s->email_2,
+				'phone'           => $s->phone,
+				'level'           => $s->level,
 				'tbt_monthly_fee' => (float) $s->tbt_monthly_fee,
 				'notes'           => $s->notes,
 				'status'          => $s->status,
@@ -277,11 +325,10 @@ class MMR_Import {
 				'name'          => $c->name,
 				'fee'           => (float) $c->fee,
 				'client_type'   => $c->client_type,
-				'venue'         => $c->venue,
+				'company_ref'   => ( $c->company_id && isset( $company_ref[ (int) $c->company_id ] ) ) ? $company_ref[ (int) $c->company_id ] : null,
 				'settle_method' => $c->settle_method,
 				'notes'         => $c->notes,
 				'status'        => $c->status,
-				'sort_name'     => $c->sort_name,
 				'members'       => $members,
 			);
 		}

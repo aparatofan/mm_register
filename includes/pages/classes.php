@@ -13,6 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 $search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
 $status = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : 'active';
 $type_filter = isset( $_GET['client_type'] ) ? sanitize_text_field( wp_unslash( $_GET['client_type'] ) ) : '';
+$company_filter = isset( $_GET['company_id'] ) ? (int) $_GET['company_id'] : 0;
 // phpcs:enable
 if ( ! in_array( $status, array( 'active', 'archived', 'all' ), true ) ) {
 	$status = 'active';
@@ -22,14 +23,20 @@ $classes = MMR_Data::classes( array(
 	'status'      => $status,
 	'search'      => $search,
 	'client_type' => $type_filter,
+	'company_id'  => $company_filter,
 ) );
 $all_active_students = MMR_Data::students( array( 'status' => 'active' ) );
 $client_types = MMR_Data::class_field_values( 'client_type' );
-$venues = MMR_Data::class_field_values( 'venue' );
 $settle_methods = MMR_Data::class_field_values( 'settle_method' );
+$active_companies = MMR_Data::companies( array( 'status' => 'active' ) );
+$all_companies = MMR_Data::companies( array( 'status' => 'all' ) );
+$company_names = MMR_Data::company_names(); // id => name, all statuses.
 
 // Filters echoed back by row-action forms so archiving keeps the current view.
 $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $type_filter );
+if ( $company_filter ) {
+	$filter_args['company_id'] = $company_filter;
+}
 ?>
 <div class="mmr-wrap mmr-classes">
 	<h1 class="mmr-page-title"><?php esc_html_e( 'Classes', 'mm-register' ); ?></h1>
@@ -43,6 +50,12 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 				<option value=""><?php esc_html_e( 'All client types', 'mm-register' ); ?></option>
 				<?php foreach ( $client_types as $ct ) : ?>
 					<option value="<?php echo esc_attr( $ct ); ?>" <?php selected( $type_filter, $ct ); ?>><?php echo esc_html( $ct ); ?></option>
+				<?php endforeach; ?>
+			</select>
+			<select name="company_id">
+				<option value="0"><?php esc_html_e( 'All companies', 'mm-register' ); ?></option>
+				<?php foreach ( $all_companies as $co ) : ?>
+					<option value="<?php echo esc_attr( $co->id ); ?>" <?php selected( $company_filter, (int) $co->id ); ?>><?php echo esc_html( $co->name ); ?></option>
 				<?php endforeach; ?>
 			</select>
 			<select name="status">
@@ -64,7 +77,6 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 			<input type="text" name="fee" class="mmr-input-fee" inputmode="decimal" placeholder="<?php esc_attr_e( 'Fee', 'mm-register' ); ?>">
 			<input type="text" name="tbt_monthly_fee" class="mmr-input-fee" inputmode="decimal" placeholder="<?php esc_attr_e( 'TBT', 'mm-register' ); ?>">
 			<input type="email" name="email" placeholder="<?php esc_attr_e( 'Email (optional)', 'mm-register' ); ?>">
-			<input type="text" name="venue" list="mmr-venues" placeholder="<?php esc_attr_e( 'Venue', 'mm-register' ); ?>">
 			<input type="text" name="settle_method" list="mmr-settle-methods" placeholder="<?php esc_attr_e( 'Settle', 'mm-register' ); ?>">
 			<button type="submit" class="button button-primary"><?php esc_html_e( 'Create student + class', 'mm-register' ); ?></button>
 		</form>
@@ -76,7 +88,7 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 				<th><?php esc_html_e( 'Name', 'mm-register' ); ?></th>
 				<th><?php esc_html_e( 'Fee', 'mm-register' ); ?></th>
 				<th><?php esc_html_e( 'Client type', 'mm-register' ); ?></th>
-				<th><?php esc_html_e( 'Venue', 'mm-register' ); ?></th>
+				<th><?php esc_html_e( 'Company', 'mm-register' ); ?></th>
 				<th><?php esc_html_e( 'Settle method', 'mm-register' ); ?></th>
 				<th><?php esc_html_e( 'Members', 'mm-register' ); ?></th>
 				<th><?php esc_html_e( 'Status', 'mm-register' ); ?></th>
@@ -91,6 +103,8 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 				$members = MMR_Data::class_members( $class->id );
 				$member_names = wp_list_pluck( $members, 'student_name' );
 				$is_archived = ( 'archived' === $class->status );
+				$company_id = (int) $class->company_id;
+				$company_name = ( $company_id && isset( $company_names[ $company_id ] ) ) ? $company_names[ $company_id ] : '';
 				$member_json = array();
 				foreach ( $members as $member ) {
 					$member_json[] = array(
@@ -104,11 +118,11 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 					'name'          => $class->name,
 					'fee'           => $class->fee,
 					'client_type'   => $class->client_type,
-					'venue'         => $class->venue,
+					'company_id'    => $company_id ? $company_id : '',
+					'company'       => $company_name,
 					'settle_method' => $class->settle_method,
 					'notes'         => $class->notes,
 					'status'        => $class->status,
-					'sort_name'     => $class->sort_name,
 					'members'       => $member_json,
 				) );
 				?>
@@ -116,7 +130,7 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 					<td><strong><?php echo esc_html( $class->name ); ?></strong></td>
 					<td><?php echo mmr_money_esc( $class->fee ); ?></td>
 					<td><?php echo esc_html( $class->client_type ); ?></td>
-					<td><?php echo esc_html( $class->venue ); ?></td>
+					<td><?php echo esc_html( $company_name ); ?></td>
 					<td><?php echo esc_html( $class->settle_method ); ?></td>
 					<td>
 						<span title="<?php echo esc_attr( implode( ', ', $member_names ) ); ?>"><?php echo count( $members ); ?></span>
@@ -148,16 +162,25 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 			<option value="<?php echo esc_attr( $ct ); ?>"></option>
 		<?php endforeach; ?>
 	</datalist>
-	<datalist id="mmr-venues">
-		<?php foreach ( $venues as $v ) : ?>
-			<option value="<?php echo esc_attr( $v ); ?>"></option>
-		<?php endforeach; ?>
-	</datalist>
 	<datalist id="mmr-settle-methods">
 		<?php foreach ( $settle_methods as $sm ) : ?>
 			<option value="<?php echo esc_attr( $sm ); ?>"></option>
 		<?php endforeach; ?>
 	</datalist>
+	<datalist id="mmr-companies">
+		<?php foreach ( $active_companies as $co ) : ?>
+			<option value="<?php echo esc_attr( $co->name ); ?>"></option>
+		<?php endforeach; ?>
+	</datalist>
+	<?php
+	// name (lower-case) => id, so the class modal can keep the hidden company_id
+	// in sync as the operator types. Server-side resolution stays authoritative.
+	$company_map = array();
+	foreach ( $active_companies as $co ) {
+		$company_map[ mb_strtolower( $co->name ) ] = (int) $co->id;
+	}
+	?>
+	<script type="application/json" id="mmr-company-map"><?php echo wp_json_encode( $company_map ); ?></script>
 
 	<!-- Class modal -->
 	<div class="mmr-modal-overlay" id="mmr-class-modal" hidden>
@@ -168,6 +191,7 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 					<?php wp_nonce_field( 'mmr_form' ); ?>
 					<input type="hidden" name="mmr_action" value="save_class">
 					<input type="hidden" name="id" value="0" data-field="id">
+					<input type="hidden" name="company_id" value="" data-field="company_id">
 					<div class="mmr-form-grid">
 						<div class="mmr-field">
 							<label for="mmr-class-name"><?php esc_html_e( 'Name', 'mm-register' ); ?> *</label>
@@ -182,16 +206,13 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 							<input type="text" id="mmr-class-type" name="client_type" data-field="client_type" list="mmr-client-types">
 						</div>
 						<div class="mmr-field">
-							<label for="mmr-class-venue"><?php esc_html_e( 'Venue', 'mm-register' ); ?></label>
-							<input type="text" id="mmr-class-venue" name="venue" data-field="venue" list="mmr-venues" placeholder="online / office / other">
+							<label for="mmr-class-company"><?php esc_html_e( 'Company (optional)', 'mm-register' ); ?></label>
+							<input type="text" id="mmr-class-company" name="company" data-field="company" list="mmr-companies" autocomplete="off" placeholder="<?php esc_attr_e( 'Type to search companies', 'mm-register' ); ?>">
+							<a class="mmr-field-link" href="<?php echo esc_url( mmr_page_url( 'companies' ) ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Manage companies →', 'mm-register' ); ?></a>
 						</div>
 						<div class="mmr-field">
 							<label for="mmr-class-settle"><?php esc_html_e( 'Settle method', 'mm-register' ); ?></label>
 							<input type="text" id="mmr-class-settle" name="settle_method" data-field="settle_method" list="mmr-settle-methods" placeholder="invoice / REVOLUT / rozliczenie">
-						</div>
-						<div class="mmr-field">
-							<label for="mmr-class-sort"><?php esc_html_e( 'Sort name (optional)', 'mm-register' ); ?></label>
-							<input type="text" id="mmr-class-sort" name="sort_name" data-field="sort_name">
 						</div>
 						<div class="mmr-field">
 							<label for="mmr-class-status"><?php esc_html_e( 'Status', 'mm-register' ); ?></label>
@@ -200,7 +221,6 @@ $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $typ
 								<option value="archived"><?php esc_html_e( 'archived', 'mm-register' ); ?></option>
 							</select>
 						</div>
-						<div class="mmr-field" aria-hidden="true"></div>
 						<div class="mmr-field mmr-field--full">
 							<label for="mmr-class-notes"><?php esc_html_e( 'Notes', 'mm-register' ); ?></label>
 							<textarea id="mmr-class-notes" name="notes" data-field="notes" rows="2"></textarea>
