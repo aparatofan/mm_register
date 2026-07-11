@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MM Register
  * Plugin URI:        https://mariuszmirecki.pl/
- * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students & classes database and a computed monthly settlement report. No front-end output.
+ * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students / classes / companies database and a computed monthly settlement report. No front-end output.
  * Version:           2.0.0
  * Requires at least: 6.0
  * Requires PHP:      8.1

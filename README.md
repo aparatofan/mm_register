@@ -5,8 +5,8 @@ replaces the REGISTER Google Sheet's scheduling core: book lessons in a weekly
 calendar, know what to bill at the end of the month.
 
 Built to the specification in [`mm_register_SPEC.md`](mm_register_SPEC.md)
-(v2 — trimmed). Pure PHP + vanilla JS — **no jQuery, no external JS/CSS
-frameworks, no build step.**
+(v2.1). Pure PHP + vanilla JS — **no jQuery, no external JS/CSS frameworks, no
+build step.**
 
 ## Highlights
 
@@ -17,13 +17,17 @@ frameworks, no build step.**
 - **Fee snapshotting** — each lesson stores its own fee (and member shares) at
   booking time, so changing a class fee never rewrites history.
 - **Settlement** — a read-only monthly report computed entirely from lessons:
-  one row per class (with expandable per-student splits and TBT monthly
-  surcharges) plus the per-student **"to bill"** summary used when issuing
-  KSeF invoices, with copy-to-clipboard and CSV export. Nothing is stored;
-  any month is reproducible.
+  one row per class (with company, expandable per-student splits and TBT
+  monthly surcharges) plus the per-student **"to bill"** summary used when
+  issuing KSeF invoices, with a Company column and copy-to-clipboard / CSV
+  export. Nothing is stored; any month is reproducible.
 - **Students** and **Classes** as standalone pages: search, status filters,
   archive/restore (never hard delete), modal editing, members repeater with
-  per-lesson shares, and a quick-add for new 1-on-1 students.
+  per-lesson shares, and a quick-add for new 1-on-1 students. Students carry
+  name, level (CEFR), two e-mails, phone and TBT fee.
+- **Companies** — a standalone page for invoice/billing details (name, NIP,
+  address, notes) that classes link to, so Settlement can show which company
+  each invoice goes to.
 - **Tools** page for JSON import (dry-run first), full JSON export and a
   typed-confirmation data wipe.
 
@@ -35,9 +39,10 @@ to `wp-content/uploads/mm-register-backups/` before dropping them).
 
 - Slug `mm-register`, main file `mm-register.php`, everything prefixed `mmr_`.
 - WordPress 6.x, PHP 8.1+. Custom `dbDelta` tables: `mmr_students`,
-  `mmr_classes`, `mmr_class_members`, `mmr_lessons`.
+  `mmr_classes`, `mmr_class_members`, `mmr_lessons`, `mmr_companies`.
 - DB version tracked in the `mmr_db_version` option; upgrades run
-  automatically on plugin load and are idempotent.
+  automatically on plugin load and are idempotent. The v2.1 upgrade backs up
+  `mmr_classes` before dropping its `venue` and `sort_name` columns.
 - All pages gated by `manage_options`; all writes via nonces + capability
   checks; all SQL via `$wpdb->prepare`; all output escaped.
 - Assets are enqueued **only** on the plugin's own admin screens (avoids the
