@@ -15,7 +15,7 @@ if ( $import_result ) {
 }
 $is_empty = MMR_DB::is_empty();
 ?>
-<div class="wrap mmr-wrap mmr-tools">
+<div class="mmr-wrap mmr-tools">
 	<h1 class="mmr-page-title"><?php esc_html_e( 'Tools', 'mm-register' ); ?></h1>
 
 	<div class="mmr-tools-grid">

@@ -50,7 +50,6 @@ class MMR_Admin {
 		$messages = array(
 			'saved'            => __( 'Saved.', 'mm-register' ),
 			'deleted'          => __( 'Deleted.', 'mm-register' ),
-			'settlement_saved' => __( 'Settlement recorded.', 'mm-register' ),
 			'imported'         => __( 'Import complete.', 'mm-register' ),
 			'wiped'            => __( 'All plugin data has been deleted.', 'mm-register' ),
 			'import_blocked'   => __( 'Tables are not empty. Choose "merge" to import anyway.', 'mm-register' ),
@@ -76,28 +75,13 @@ class MMR_Admin {
 	}
 
 	/** @return void */
-	public function render_receivables() {
-		$this->render( 'receivables.php' );
+	public function render_students() {
+		$this->render( 'students.php' );
 	}
 
 	/** @return void */
-	public function render_students_classes() {
-		$this->render( 'students-classes.php' );
-	}
-
-	/** @return void */
-	public function render_budget() {
-		$this->render( 'budget.php' );
-	}
-
-	/** @return void */
-	public function render_expenses() {
-		$this->render( 'expenses.php' );
-	}
-
-	/** @return void */
-	public function render_projections() {
-		$this->render( 'projections.php' );
+	public function render_classes() {
+		$this->render( 'classes.php' );
 	}
 
 	/** @return void */
@@ -123,23 +107,14 @@ class MMR_Admin {
 		check_admin_referer( 'mmr_form' );
 
 		$map = array(
-			'save_student'      => 'post_save_student',
-			'save_class'        => 'post_save_class',
-			'quick_add_1on1'    => 'post_quick_add_1on1',
-			'record_settlement' => 'post_record_settlement',
-			'save_settlement'   => 'post_save_settlement',
-			'delete_settlement' => 'post_delete_settlement',
-			'save_budget_item'  => 'post_save_budget_item',
-			'delete_budget_item'=> 'post_delete_budget_item',
-			'save_expense'      => 'post_save_expense',
-			'delete_expense'    => 'post_delete_expense',
-			'mark_expense_paid' => 'post_mark_expense_paid',
-			'unmark_expense_paid' => 'post_unmark_expense_paid',
-			'save_projection'   => 'post_save_projection',
-			'delete_projection' => 'post_delete_projection',
-			'import_data'       => 'post_import_data',
-			'export_data'       => 'post_export_data',
-			'wipe_data'         => 'post_wipe_data',
+			'save_student'          => 'post_save_student',
+			'toggle_student_status' => 'post_toggle_student_status',
+			'save_class'            => 'post_save_class',
+			'toggle_class_status'   => 'post_toggle_class_status',
+			'quick_add_1on1'        => 'post_quick_add_1on1',
+			'import_data'           => 'post_import_data',
+			'export_data'           => 'post_export_data',
+			'wipe_data'             => 'post_wipe_data',
 		);
 		if ( isset( $map[ $action ] ) ) {
 			$this->{$map[ $action ]}();
@@ -204,24 +179,24 @@ class MMR_Admin {
 		return empty( $_POST[ $key ] ) ? 0 : 1; // phpcs:ignore WordPress.Security.NonceVerification
 	}
 
+	/* --- Students & classes ------------------------------------------- */
+
 	/**
-	 * Validate a date field or return empty string.
+	 * Collect the filter_* fields a row-action form echoes back, so the
+	 * redirect can restore the list view (search / status / type filter).
 	 *
-	 * @param string $key Field name.
-	 * @return string Y-m-d or ''.
+	 * @return array
 	 */
-	protected function date( $key ) {
-		$raw = $this->text( $key );
-		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $raw ) ) {
-			$p = explode( '-', $raw );
-			if ( checkdate( (int) $p[1], (int) $p[2], (int) $p[0] ) ) {
-				return $raw;
+	protected function filter_args() {
+		$args = array();
+		foreach ( array( 's', 'status', 'client_type' ) as $key ) {
+			$value = $this->text( 'filter_' . $key );
+			if ( '' !== $value ) {
+				$args[ $key ] = $value;
 			}
 		}
-		return '';
+		return $args;
 	}
-
-	/* --- Students & classes ------------------------------------------- */
 
 	/** Save a student. */
 	protected function post_save_student() {
@@ -234,10 +209,20 @@ class MMR_Admin {
 			'status'          => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
 		);
 		if ( '' === $data['name'] ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'students' ), true );
+			$this->redirect( 'students', 'Name is required.', array(), true );
 		}
 		MMR_Data::save_student( $data, $id );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'students' ) );
+		$this->redirect( 'students', 'saved' );
+	}
+
+	/** Archive / restore a student. */
+	protected function post_toggle_student_status() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$status = ( 'archived' === $this->text( 'status' ) ) ? 'archived' : 'active';
+		if ( $id ) {
+			MMR_Data::set_student_status( $id, $status );
+		}
+		$this->redirect( 'students', 'saved', $this->filter_args() );
 	}
 
 	/** Save a class + its members. */
@@ -254,7 +239,7 @@ class MMR_Admin {
 			'sort_name'     => $this->text( 'sort_name' ),
 		);
 		if ( '' === $data['name'] ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'classes' ), true );
+			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
 		$class_id = MMR_Data::save_class( $data, $id );
 
@@ -274,7 +259,17 @@ class MMR_Admin {
 			);
 		}
 		MMR_Data::set_members( $class_id, $members );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'classes' ) );
+		$this->redirect( 'classes', 'saved' );
+	}
+
+	/** Archive / restore a class. */
+	protected function post_toggle_class_status() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$status = ( 'archived' === $this->text( 'status' ) ) ? 'archived' : 'active';
+		if ( $id ) {
+			MMR_Data::set_class_status( $id, $status );
+		}
+		$this->redirect( 'classes', 'saved', $this->filter_args() );
 	}
 
 	/** Quick-add a 1-on-1 student + same-named class + membership. */
@@ -284,7 +279,7 @@ class MMR_Admin {
 		$tbt = $this->money( 'tbt_monthly_fee' );
 		$email = sanitize_email( $this->text( 'email' ) );
 		if ( '' === $name ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'classes' ), true );
+			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
 		$student_id = MMR_Data::save_student( array(
 			'name'            => $name,
@@ -304,205 +299,7 @@ class MMR_Admin {
 			'sort_name'     => '',
 		) );
 		MMR_Data::set_members( $class_id, array( array( 'student_id' => $student_id, 'share' => null ) ) );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'classes' ) );
-	}
-
-	/* --- Settlement / receivables ------------------------------------- */
-
-	/** Record one or more settlement rows from the settlement screen. */
-	protected function post_record_settlement() {
-		$period = mmr_sanitize_period( $this->text( 'period' ) );
-		$class_id = isset( $_POST['class_id'] ) ? (int) $_POST['class_id'] : 0;
-		$per_member = $this->bool( 'per_member' );
-		if ( ! $period || ! $class_id ) {
-			$this->redirect( 'settlement', 'nothing', array(), true );
-		}
-		$doc_date = $this->date( 'doc_date' );
-
-		if ( $per_member ) {
-			$doc_type = $this->text( 'doc_type_pm' );
-			$names = isset( $_POST['member_name'] ) ? (array) wp_unslash( $_POST['member_name'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
-			$amounts = isset( $_POST['member_amount'] ) ? (array) wp_unslash( $_POST['member_amount'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
-			foreach ( $names as $i => $name ) {
-				$amount = isset( $amounts[ $i ] ) ? mmr_sanitize_money( $amounts[ $i ] ) : 0;
-				if ( $amount <= 0 ) {
-					continue;
-				}
-				MMR_Data::save_settlement( array(
-					'doc_type'    => $doc_type,
-					'doc_number'  => '',
-					'doc_date'    => $doc_date,
-					'payer_label' => sanitize_text_field( $name ),
-					'class_id'    => $class_id,
-					'period'      => $period,
-					'amount'      => $amount,
-					'ksef'        => 0,
-					'sent'        => 0,
-					'paid'        => 0,
-					'paid_on'     => '',
-					'notes'       => '',
-				) );
-			}
-		} else {
-			MMR_Data::save_settlement( array(
-				'doc_type'    => $this->text( 'doc_type' ),
-				'doc_number'  => $this->text( 'doc_number' ),
-				'doc_date'    => $doc_date,
-				'payer_label' => $this->text( 'payer_label' ),
-				'class_id'    => $class_id,
-				'period'      => $period,
-				'amount'      => $this->money( 'amount' ),
-				'ksef'        => $this->bool( 'ksef' ),
-				'sent'        => $this->bool( 'sent' ),
-				'paid'        => 0,
-				'paid_on'     => '',
-				'notes'       => $this->textarea( 'notes' ),
-			) );
-		}
-		$this->redirect( 'settlement', 'settlement_saved', array( 'period' => $period ) );
-	}
-
-	/** Save / add a settlement (Receivables manual entry). */
-	protected function post_save_settlement() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$data = array(
-			'doc_type'    => $this->text( 'doc_type' ),
-			'doc_number'  => $this->text( 'doc_number' ),
-			'doc_date'    => $this->date( 'doc_date' ),
-			'payer_label' => $this->text( 'payer_label' ),
-			'class_id'    => isset( $_POST['class_id'] ) ? (int) $_POST['class_id'] : 0,
-			'period'      => mmr_sanitize_period( $this->text( 'period' ) ),
-			'amount'      => $this->money( 'amount' ),
-			'ksef'        => $this->bool( 'ksef' ),
-			'sent'        => $this->bool( 'sent' ),
-			'paid'        => $this->bool( 'paid' ),
-			'paid_on'     => $this->date( 'paid_on' ),
-			'notes'       => $this->textarea( 'notes' ),
-		);
-		if ( $data['paid'] && ! $data['paid_on'] ) {
-			$data['paid_on'] = current_time( 'Y-m-d' );
-		}
-		MMR_Data::save_settlement( $data, $id );
-		$this->redirect( 'receivables', 'saved' );
-	}
-
-	/** Delete a settlement. */
-	protected function post_delete_settlement() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		if ( $id ) {
-			MMR_Data::delete_settlement( $id );
-		}
-		$this->redirect( 'receivables', 'deleted' );
-	}
-
-	/* --- Budget -------------------------------------------------------- */
-
-	/** Save a budget item. */
-	protected function post_save_budget_item() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$kind = $this->text( 'kind' );
-		if ( ! in_array( $kind, array( 'asset', 'liability', 'reserve', 'note_only' ), true ) ) {
-			$kind = 'asset';
-		}
-		MMR_Data::save_budget_item( array(
-			'label'      => $this->text( 'label' ),
-			'amount'     => $this->money( 'amount' ),
-			'kind'       => $kind,
-			'sort_order' => isset( $_POST['sort_order'] ) ? (int) $_POST['sort_order'] : 0,
-			'notes'      => $this->textarea( 'notes' ),
-		), $id );
-		$this->redirect( 'budget', 'saved' );
-	}
-
-	/** Delete a budget item. */
-	protected function post_delete_budget_item() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		if ( $id ) {
-			MMR_Data::delete_budget_item( $id );
-		}
-		$this->redirect( 'budget', 'deleted' );
-	}
-
-	/* --- Expenses ------------------------------------------------------ */
-
-	/** Save an expense definition. */
-	protected function post_save_expense() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$pay_type = in_array( $this->text( 'pay_type' ), array( 'manual', 'subscription' ), true ) ? $this->text( 'pay_type' ) : 'manual';
-		$frequency = in_array( $this->text( 'frequency' ), array( 'monthly', 'yearly' ), true ) ? $this->text( 'frequency' ) : 'monthly';
-		$category = in_array( $this->text( 'category' ), array( 'critical', 'moderate', 'whim' ), true ) ? $this->text( 'category' ) : 'moderate';
-		MMR_Data::save_expense( array(
-			'title'     => $this->text( 'title' ),
-			'projected' => $this->money( 'projected' ),
-			'pay_type'  => $pay_type,
-			'frequency' => $frequency,
-			'category'  => $category,
-			'due_note'  => $this->text( 'due_note' ),
-			'active'    => $this->bool( 'active' ),
-		), $id );
-		$this->redirect( 'expenses', 'saved' );
-	}
-
-	/** Delete an expense definition. */
-	protected function post_delete_expense() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		if ( $id ) {
-			MMR_Data::delete_expense( $id );
-		}
-		$this->redirect( 'expenses', 'deleted' );
-	}
-
-	/** Mark an expense paid for a period. */
-	protected function post_mark_expense_paid() {
-		$expense_id = isset( $_POST['expense_id'] ) ? (int) $_POST['expense_id'] : 0;
-		$period = mmr_sanitize_period( $this->text( 'period' ) );
-		if ( ! $expense_id || ! $period ) {
-			$this->redirect( 'expenses', 'nothing', array(), true );
-		}
-		$spent = $this->money( 'spent' );
-		$paid_on = $this->date( 'paid_on' );
-		if ( ! $paid_on ) {
-			$paid_on = current_time( 'Y-m-d' );
-		}
-		MMR_Data::mark_expense_paid( $expense_id, $period, $spent, $paid_on );
-		$this->redirect( 'expenses', 'saved', array( 'period' => $period ) );
-	}
-
-	/** Un-mark an expense payment. */
-	protected function post_unmark_expense_paid() {
-		$expense_id = isset( $_POST['expense_id'] ) ? (int) $_POST['expense_id'] : 0;
-		$period = mmr_sanitize_period( $this->text( 'period' ) );
-		if ( $expense_id && $period ) {
-			MMR_Data::unmark_expense_paid( $expense_id, $period );
-		}
-		$this->redirect( 'expenses', 'deleted', array( 'period' => $period ) );
-	}
-
-	/* --- Projections --------------------------------------------------- */
-
-	/** Save a projection. */
-	protected function post_save_projection() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$period = mmr_sanitize_period( $this->text( 'period' ) );
-		if ( ! $period ) {
-			$this->redirect( 'projections', 'Invalid month.', array(), true );
-		}
-		MMR_Data::save_projection( array(
-			'period'    => $period,
-			'projected' => $this->money( 'projected' ),
-			'expenses'  => $this->money( 'expenses' ),
-			'notes'     => $this->textarea( 'notes' ),
-		), $id );
-		$this->redirect( 'projections', 'saved' );
-	}
-
-	/** Delete a projection. */
-	protected function post_delete_projection() {
-		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		if ( $id ) {
-			MMR_Data::delete_projection( $id );
-		}
-		$this->redirect( 'projections', 'deleted' );
+		$this->redirect( 'classes', 'saved' );
 	}
 
 	/* --- Tools --------------------------------------------------------- */

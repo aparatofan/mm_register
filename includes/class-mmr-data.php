@@ -21,7 +21,7 @@ class MMR_Data {
 	/**
 	 * Fetch students.
 	 *
-	 * @param array $args status => active|archived|all, search => string.
+	 * @param array $args status => active|archived|all, search => string (name/email).
 	 * @return array
 	 */
 	public static function students( $args = array() ) {
@@ -36,8 +36,10 @@ class MMR_Data {
 			$params[] = $status;
 		}
 		if ( ! empty( $args['search'] ) ) {
-			$where .= ' AND name LIKE %s';
-			$params[] = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			$like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			$where .= ' AND (name LIKE %s OR email LIKE %s)';
+			$params[] = $like;
+			$params[] = $like;
 		}
 
 		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY name ASC";
@@ -91,6 +93,24 @@ class MMR_Data {
 		return (int) $wpdb->insert_id;
 	}
 
+	/**
+	 * Archive / restore a student.
+	 *
+	 * @param int    $id     Student ID.
+	 * @param string $status active|archived.
+	 */
+	public static function set_student_status( $id, $status ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'students' );
+		$wpdb->update(
+			$table,
+			array( 'status' => $status, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
 	/* ---------------------------------------------------------------------
 	 * Classes & members
 	 * ------------------------------------------------------------------ */
@@ -98,7 +118,7 @@ class MMR_Data {
 	/**
 	 * Fetch classes.
 	 *
-	 * @param array $args status, search.
+	 * @param array $args status, search, client_type.
 	 * @return array
 	 */
 	public static function classes( $args = array() ) {
@@ -115,6 +135,10 @@ class MMR_Data {
 		if ( ! empty( $args['search'] ) ) {
 			$where .= ' AND name LIKE %s';
 			$params[] = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+		}
+		if ( ! empty( $args['client_type'] ) ) {
+			$where .= ' AND client_type = %s';
+			$params[] = $args['client_type'];
 		}
 
 		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY COALESCE(NULLIF(sort_name,''), name) ASC";
@@ -137,14 +161,19 @@ class MMR_Data {
 	}
 
 	/**
-	 * Distinct existing client_type values (for datalist suggestions).
+	 * Distinct existing values of a classes column (for datalist suggestions).
 	 *
+	 * @param string $field client_type|venue|settle_method.
 	 * @return string[]
 	 */
-	public static function client_types() {
+	public static function class_field_values( $field ) {
 		global $wpdb;
+		if ( ! in_array( $field, array( 'client_type', 'venue', 'settle_method' ), true ) ) {
+			return array();
+		}
 		$table = MMR_DB::table( 'classes' );
-		$rows = $wpdb->get_col( "SELECT DISTINCT client_type FROM {$table} WHERE client_type <> '' ORDER BY client_type ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
+		// Column name comes from the whitelist above; safe to interpolate.
+		$rows = $wpdb->get_col( "SELECT DISTINCT {$field} FROM {$table} WHERE {$field} IS NOT NULL AND {$field} <> '' ORDER BY {$field} ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
 		return array_filter( (array) $rows );
 	}
 
@@ -209,6 +238,18 @@ class MMR_Data {
 		}
 		$wpdb->insert( $table, $row, $formats );
 		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Archive / restore a class.
+	 *
+	 * @param int    $id     Class ID.
+	 * @param string $status active|archived.
+	 */
+	public static function set_class_status( $id, $status ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'classes' );
+		$wpdb->update( $table, array( 'status' => $status ), array( 'id' => $id ), array( '%s' ), array( '%d' ) );
 	}
 
 	/**
@@ -449,18 +490,24 @@ class MMR_Data {
 	}
 
 	/* ---------------------------------------------------------------------
-	 * Settlement computation
+	 * Settlement computation (read-only, derived from lessons)
 	 * ------------------------------------------------------------------ */
 
 	/**
-	 * Compute the settlement breakdown for a month.
-	 * One entry per class with >=1 lesson in the period.
+	 * Compute the monthly settlement report. Nothing is stored — everything
+	 * is derived from mmr_lessons (fee + share snapshots), so any month is
+	 * reproducible.
 	 *
 	 * @param string $period Y-m.
 	 * @return array {
-	 *     rows        => array of class breakdowns,
-	 *     grand_total => float,
-	 *     settled     => float already recorded (matched by class_id+period),
+	 *     classes       => one row per class with >=1 lesson: class_id,
+	 *                      class_name, client_type, settle_method,
+	 *                      lesson_count, fees_used, class_total (Σ fee_snapshot),
+	 *                      members (per-student breakdown incl. TBT),
+	 *     students      => per-student summary: student_id, name, lessons,
+	 *                      lesson_total, tbt (added once per month), to_bill,
+	 *     month_total   => Σ class totals (lesson fees only),
+	 *     to_bill_total => Σ per-student to_bill (lesson shares + TBT),
 	 * }
 	 */
 	public static function settlement( $period ) {
@@ -469,7 +516,7 @@ class MMR_Data {
 		$c = MMR_DB::table( 'classes' );
 
 		$lessons = $wpdb->get_results( $wpdb->prepare(
-			"SELECT le.*, c.name AS class_name, c.settle_method
+			"SELECT le.*, c.name AS class_name, c.client_type, c.settle_method
 			 FROM {$l} le JOIN {$c} c ON c.id = le.class_id
 			 WHERE DATE_FORMAT(le.lesson_date, '%%Y-%%m') = %s
 			 ORDER BY c.name ASC, le.lesson_date ASC",
@@ -477,22 +524,24 @@ class MMR_Data {
 		) ); // phpcs:ignore WordPress.DB.PreparedSQL
 
 		$classes = array();
+		$per_student = array(); // student_id => [ lessons, lesson_total ].
 		foreach ( $lessons as $lesson ) {
 			$cid = (int) $lesson->class_id;
 			if ( ! isset( $classes[ $cid ] ) ) {
 				$classes[ $cid ] = array(
 					'class_id'      => $cid,
 					'class_name'    => $lesson->class_name,
+					'client_type'   => $lesson->client_type,
 					'settle_method' => $lesson->settle_method,
 					'lesson_count'  => 0,
-					'lessons_subtotal' => 0.0,
+					'class_total'   => 0.0,
 					'fees_used'     => array(),
-					'member_totals' => array(), // student_id => amount from lessons.
+					'member_totals' => array(), // student_id => [ lessons, amount ].
 				);
 			}
 			$classes[ $cid ]['lesson_count']++;
 			$fee = (float) $lesson->fee_snapshot;
-			$classes[ $cid ]['lessons_subtotal'] += $fee;
+			$classes[ $cid ]['class_total'] += $fee;
 			$key = number_format( $fee, 2, '.', '' );
 			$classes[ $cid ]['fees_used'][ $key ] = isset( $classes[ $cid ]['fees_used'][ $key ] ) ? $classes[ $cid ]['fees_used'][ $key ] + 1 : 1;
 
@@ -509,523 +558,111 @@ class MMR_Data {
 			}
 			foreach ( $shares as $sid => $amount ) {
 				$sid = (int) $sid;
-				$classes[ $cid ]['member_totals'][ $sid ] = isset( $classes[ $cid ]['member_totals'][ $sid ] )
-					? $classes[ $cid ]['member_totals'][ $sid ] + (float) $amount
-					: (float) $amount;
+				$amount = (float) $amount;
+				if ( ! isset( $classes[ $cid ]['member_totals'][ $sid ] ) ) {
+					$classes[ $cid ]['member_totals'][ $sid ] = array( 'lessons' => 0, 'amount' => 0.0 );
+				}
+				$classes[ $cid ]['member_totals'][ $sid ]['lessons']++;
+				$classes[ $cid ]['member_totals'][ $sid ]['amount'] += $amount;
+
+				if ( ! isset( $per_student[ $sid ] ) ) {
+					$per_student[ $sid ] = array( 'lessons' => 0, 'lesson_total' => 0.0 );
+				}
+				$per_student[ $sid ]['lessons']++;
+				$per_student[ $sid ]['lesson_total'] += $amount;
 			}
 		}
 
-		// Add TBT surcharges and finalise per-class + per-member totals.
-		$rows = array();
-		$grand_total = 0.0;
+		// Names + TBT fees for every student that appears in a share snapshot
+		// (fetched directly so archived / since-removed members still resolve).
+		$student_rows = self::students_by_ids( array_keys( $per_student ) );
+
+		$name_of = function ( $sid ) use ( $student_rows ) {
+			return isset( $student_rows[ $sid ] ) ? $student_rows[ $sid ]->name : ( '#' . $sid );
+		};
+		$tbt_of = function ( $sid ) use ( $student_rows ) {
+			return isset( $student_rows[ $sid ] ) ? (float) $student_rows[ $sid ]->tbt_monthly_fee : 0.0;
+		};
+
+		// Per-class rows with member breakdown.
+		$class_rows = array();
+		$month_total = 0.0;
 		foreach ( $classes as $cid => $data ) {
-			$members = self::class_members( $cid );
-			$member_names = array();
-			$member_tbt = array();
-			foreach ( $members as $member ) {
-				$member_names[ (int) $member->student_id ] = $member->student_name;
-				$member_tbt[ (int) $member->student_id ] = (float) $member->tbt_monthly_fee;
-			}
-
-			$tbt_lines = array();
-			$tbt_total = 0.0;
-			// A member earns their TBT surcharge if they had >=1 lesson this month,
-			// i.e. they appear in member_totals.
-			foreach ( $data['member_totals'] as $sid => $amount ) {
-				$fee = isset( $member_tbt[ $sid ] ) ? $member_tbt[ $sid ] : 0.0;
-				if ( $fee > 0 ) {
-					$tbt_lines[] = array(
-						'student_id'   => $sid,
-						'student_name' => isset( $member_names[ $sid ] ) ? $member_names[ $sid ] : ( '#' . $sid ),
-						'amount'       => $fee,
-					);
-					$tbt_total += $fee;
-				}
-			}
-
-			// Build per-member breakdown (lesson amounts + own TBT).
-			$member_breakdown = array();
-			foreach ( $data['member_totals'] as $sid => $amount ) {
-				$tbt = ( isset( $member_tbt[ $sid ] ) && $member_tbt[ $sid ] > 0 ) ? $member_tbt[ $sid ] : 0.0;
-				$member_breakdown[] = array(
+			$members = array();
+			foreach ( $data['member_totals'] as $sid => $mt ) {
+				$tbt = $tbt_of( $sid );
+				$members[] = array(
 					'student_id'   => $sid,
-					'student_name' => isset( $member_names[ $sid ] ) ? $member_names[ $sid ] : ( '#' . $sid ),
-					'lessons_amount' => round( $amount, 2 ),
+					'student_name' => $name_of( $sid ),
+					'lessons'      => $mt['lessons'],
+					'lessons_amount' => round( $mt['amount'], 2 ),
 					'tbt'          => $tbt,
-					'total'        => round( $amount + $tbt, 2 ),
+					'total'        => round( $mt['amount'] + $tbt, 2 ),
 				);
 			}
-			usort( $member_breakdown, function ( $a, $b ) {
+			usort( $members, function ( $a, $b ) {
 				return strcmp( $a['student_name'], $b['student_name'] );
 			} );
 
-			$class_total = round( $data['lessons_subtotal'] + $tbt_total, 2 );
-			$grand_total += $class_total;
-
-			$rows[] = array(
-				'class_id'         => $cid,
-				'class_name'       => $data['class_name'],
-				'settle_method'    => $data['settle_method'],
-				'lesson_count'     => $data['lesson_count'],
-				'lessons_subtotal' => round( $data['lessons_subtotal'], 2 ),
-				'fees_used'        => $data['fees_used'],
-				'tbt_lines'        => $tbt_lines,
-				'tbt_total'        => round( $tbt_total, 2 ),
-				'class_total'      => $class_total,
-				'member_breakdown' => $member_breakdown,
-				'is_group'         => count( $members ) > 1,
-				'settled'          => self::settlements_for_class_period( $cid, $period ),
-			);
+			$data['class_total'] = round( $data['class_total'], 2 );
+			$data['members'] = $members;
+			unset( $data['member_totals'] );
+			$month_total += $data['class_total'];
+			$class_rows[] = $data;
 		}
 
-		usort( $rows, function ( $a, $b ) {
+		usort( $class_rows, function ( $a, $b ) {
 			return strcmp( $a['class_name'], $b['class_name'] );
 		} );
 
-		$settled_amount = 0.0;
-		foreach ( $rows as $row ) {
-			foreach ( $row['settled'] as $s ) {
-				$settled_amount += (float) $s->amount;
-			}
+		// Per-student summary: TBT surcharge added ONCE per month when the
+		// student had >=1 lesson, regardless of how many classes they attend.
+		$student_rows_out = array();
+		$to_bill_total = 0.0;
+		foreach ( $per_student as $sid => $ps ) {
+			$tbt = $tbt_of( $sid );
+			$to_bill = round( $ps['lesson_total'] + $tbt, 2 );
+			$student_rows_out[] = array(
+				'student_id'   => $sid,
+				'student_name' => $name_of( $sid ),
+				'lessons'      => $ps['lessons'],
+				'lesson_total' => round( $ps['lesson_total'], 2 ),
+				'tbt'          => $tbt,
+				'to_bill'      => $to_bill,
+			);
+			$to_bill_total += $to_bill;
 		}
+		usort( $student_rows_out, function ( $a, $b ) {
+			return strcmp( $a['student_name'], $b['student_name'] );
+		} );
 
 		return array(
-			'rows'        => $rows,
-			'grand_total' => round( $grand_total, 2 ),
-			'settled'     => round( $settled_amount, 2 ),
+			'classes'       => $class_rows,
+			'students'      => $student_rows_out,
+			'month_total'   => round( $month_total, 2 ),
+			'to_bill_total' => round( $to_bill_total, 2 ),
 		);
 	}
 
 	/**
-	 * Existing settlement rows recorded for a class + period.
+	 * Fetch student rows keyed by ID.
 	 *
-	 * @param int    $class_id Class ID.
-	 * @param string $period   Y-m.
-	 * @return array
+	 * @param int[] $ids Student IDs.
+	 * @return array id => row object.
 	 */
-	public static function settlements_for_class_period( $class_id, $period ) {
+	public static function students_by_ids( $ids ) {
 		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		return $wpdb->get_results( $wpdb->prepare(
-			"SELECT * FROM {$t} WHERE class_id = %d AND period = %s ORDER BY id ASC",
-			$class_id,
-			$period
-		) ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/* ---------------------------------------------------------------------
-	 * Settlements (receivables register)
-	 * ------------------------------------------------------------------ */
-
-	/**
-	 * Query settlements with filters.
-	 *
-	 * @param array $args period, payer, paid (all|paid|unpaid), year.
-	 * @return array
-	 */
-	public static function settlements( $args = array() ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		$where = '1=1';
-		$params = array();
-
-		if ( ! empty( $args['period'] ) ) {
-			$where .= ' AND period = %s';
-			$params[] = $args['period'];
+		$ids = array_filter( array_map( 'intval', (array) $ids ) );
+		if ( empty( $ids ) ) {
+			return array();
 		}
-		if ( ! empty( $args['payer'] ) ) {
-			$where .= ' AND payer_label LIKE %s';
-			$params[] = '%' . $wpdb->esc_like( $args['payer'] ) . '%';
+		$table = MMR_DB::table( 'students' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE id IN ({$placeholders})", $ids ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ (int) $row->id ] = $row;
 		}
-		if ( ! empty( $args['year'] ) ) {
-			$where .= ' AND YEAR(doc_date) = %d';
-			$params[] = (int) $args['year'];
-		}
-		if ( isset( $args['paid'] ) && 'all' !== $args['paid'] ) {
-			$where .= ' AND paid = %d';
-			$params[] = ( 'paid' === $args['paid'] ) ? 1 : 0;
-		}
-
-		$sql = "SELECT * FROM {$t} WHERE {$where} ORDER BY doc_date DESC, id DESC";
-		if ( $params ) {
-			$sql = $wpdb->prepare( $sql, $params ); // phpcs:ignore WordPress.DB.PreparedSQL
-		}
-		return $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Single settlement.
-	 *
-	 * @param int $id ID.
-	 * @return object|null
-	 */
-	public static function settlement_row( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$t} WHERE id = %d", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Insert / update a settlement.
-	 *
-	 * @param array $data Sanitised fields.
-	 * @param int   $id   Existing ID or 0.
-	 * @return int
-	 */
-	public static function save_settlement( $data, $id = 0 ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		$row = array(
-			'doc_type'    => $data['doc_type'],
-			'doc_number'  => $data['doc_number'],
-			'doc_date'    => $data['doc_date'] ? $data['doc_date'] : null,
-			'payer_label' => $data['payer_label'],
-			'class_id'    => ! empty( $data['class_id'] ) ? (int) $data['class_id'] : null,
-			'period'      => ! empty( $data['period'] ) ? $data['period'] : null,
-			'amount'      => $data['amount'],
-			'ksef'        => ! empty( $data['ksef'] ) ? 1 : 0,
-			'sent'        => ! empty( $data['sent'] ) ? 1 : 0,
-			'paid'        => ! empty( $data['paid'] ) ? 1 : 0,
-			'paid_on'     => ! empty( $data['paid_on'] ) ? $data['paid_on'] : null,
-			'notes'       => $data['notes'],
-		);
-		$formats = array( '%s', '%s', '%s', '%s', '%d', '%s', '%f', '%d', '%d', '%d', '%s', '%s' );
-
-		if ( $id ) {
-			$wpdb->update( $t, $row, array( 'id' => $id ), $formats, array( '%d' ) );
-			return $id;
-		}
-		$wpdb->insert( $t, $row, $formats );
-		return (int) $wpdb->insert_id;
-	}
-
-	/**
-	 * Delete a settlement.
-	 *
-	 * @param int $id ID.
-	 */
-	public static function delete_settlement( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		$wpdb->delete( $t, array( 'id' => $id ), array( '%d' ) );
-	}
-
-	/**
-	 * Total of unpaid settlements — the receivables figure.
-	 *
-	 * @return float
-	 */
-	public static function unpaid_total() {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		return (float) $wpdb->get_var( "SELECT COALESCE(SUM(amount),0) FROM {$t} WHERE paid = 0" ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Unpaid count + oldest unpaid doc_date.
-	 *
-	 * @return array [ count, oldest_date|null ]
-	 */
-	public static function unpaid_summary() {
-		global $wpdb;
-		$t = MMR_DB::table( 'settlements' );
-		$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$t} WHERE paid = 0" ); // phpcs:ignore WordPress.DB.PreparedSQL
-		$oldest = $wpdb->get_var( "SELECT MIN(doc_date) FROM {$t} WHERE paid = 0 AND doc_date IS NOT NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL
-		return array( $count, $oldest );
-	}
-
-	/* ---------------------------------------------------------------------
-	 * Budget
-	 * ------------------------------------------------------------------ */
-
-	/**
-	 * Budget items, optionally by kind.
-	 *
-	 * @param string|null $kind asset|liability|reserve|note_only|null (all).
-	 * @return array
-	 */
-	public static function budget_items( $kind = null ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'budget_items' );
-		if ( $kind ) {
-			return $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$t} WHERE kind = %s ORDER BY sort_order ASC, id ASC", $kind ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-		}
-		return $wpdb->get_results( "SELECT * FROM {$t} ORDER BY kind ASC, sort_order ASC, id ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Sum of amounts for a budget kind.
-	 *
-	 * @param string $kind Kind.
-	 * @return float
-	 */
-	public static function budget_sum( $kind ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'budget_items' );
-		return (float) $wpdb->get_var( $wpdb->prepare( "SELECT COALESCE(SUM(amount),0) FROM {$t} WHERE kind = %s", $kind ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Insert / update a budget item.
-	 *
-	 * @param array $data Fields.
-	 * @param int   $id   ID or 0.
-	 * @return int
-	 */
-	public static function save_budget_item( $data, $id = 0 ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'budget_items' );
-		$row = array(
-			'label'      => $data['label'],
-			'amount'     => $data['amount'],
-			'kind'       => $data['kind'],
-			'sort_order' => (int) $data['sort_order'],
-			'notes'      => $data['notes'],
-			'updated_at' => current_time( 'mysql' ),
-		);
-		$formats = array( '%s', '%f', '%s', '%d', '%s', '%s' );
-		if ( $id ) {
-			$wpdb->update( $t, $row, array( 'id' => $id ), $formats, array( '%d' ) );
-			return $id;
-		}
-		$wpdb->insert( $t, $row, $formats );
-		return (int) $wpdb->insert_id;
-	}
-
-	/**
-	 * Delete a budget item.
-	 *
-	 * @param int $id ID.
-	 */
-	public static function delete_budget_item( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'budget_items' );
-		$wpdb->delete( $t, array( 'id' => $id ), array( '%d' ) );
-	}
-
-	/* ---------------------------------------------------------------------
-	 * Recurring expenses
-	 * ------------------------------------------------------------------ */
-
-	/**
-	 * Expense definitions.
-	 *
-	 * @param array $args frequency, active.
-	 * @return array
-	 */
-	public static function expenses( $args = array() ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'recurring_expenses' );
-		$where = '1=1';
-		$params = array();
-		if ( isset( $args['frequency'] ) ) {
-			$where .= ' AND frequency = %s';
-			$params[] = $args['frequency'];
-		}
-		if ( isset( $args['active'] ) ) {
-			$where .= ' AND active = %d';
-			$params[] = (int) $args['active'];
-		}
-		$sql = "SELECT * FROM {$t} WHERE {$where} ORDER BY category ASC, title ASC";
-		if ( $params ) {
-			$sql = $wpdb->prepare( $sql, $params ); // phpcs:ignore WordPress.DB.PreparedSQL
-		}
-		return $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Single expense.
-	 *
-	 * @param int $id ID.
-	 * @return object|null
-	 */
-	public static function expense( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'recurring_expenses' );
-		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$t} WHERE id = %d", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Insert / update an expense definition.
-	 *
-	 * @param array $data Fields.
-	 * @param int   $id   ID or 0.
-	 * @return int
-	 */
-	public static function save_expense( $data, $id = 0 ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'recurring_expenses' );
-		$row = array(
-			'title'     => $data['title'],
-			'projected' => $data['projected'],
-			'pay_type'  => $data['pay_type'],
-			'frequency' => $data['frequency'],
-			'category'  => $data['category'],
-			'due_note'  => $data['due_note'],
-			'active'    => ! empty( $data['active'] ) ? 1 : 0,
-		);
-		$formats = array( '%s', '%f', '%s', '%s', '%s', '%s', '%d' );
-		if ( $id ) {
-			$wpdb->update( $t, $row, array( 'id' => $id ), $formats, array( '%d' ) );
-			return $id;
-		}
-		$wpdb->insert( $t, $row, $formats );
-		return (int) $wpdb->insert_id;
-	}
-
-	/**
-	 * Delete an expense definition (and its payment rows).
-	 *
-	 * @param int $id ID.
-	 */
-	public static function delete_expense( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'recurring_expenses' );
-		$p = MMR_DB::table( 'expense_payments' );
-		$wpdb->delete( $t, array( 'id' => $id ), array( '%d' ) );
-		$wpdb->delete( $p, array( 'expense_id' => $id ), array( '%d' ) );
-	}
-
-	/**
-	 * Payment row for an expense in a period.
-	 *
-	 * @param int    $expense_id Expense ID.
-	 * @param string $period     Y-m.
-	 * @return object|null
-	 */
-	public static function expense_payment( $expense_id, $period ) {
-		global $wpdb;
-		$p = MMR_DB::table( 'expense_payments' );
-		return $wpdb->get_row( $wpdb->prepare(
-			"SELECT * FROM {$p} WHERE expense_id = %d AND period = %s",
-			$expense_id,
-			$period
-		) ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Mark an expense paid (or update its spent amount) for a period.
-	 *
-	 * @param int    $expense_id Expense ID.
-	 * @param string $period     Y-m.
-	 * @param float  $spent      Actual spent.
-	 * @param string $paid_on    Y-m-d.
-	 */
-	public static function mark_expense_paid( $expense_id, $period, $spent, $paid_on ) {
-		global $wpdb;
-		$p = MMR_DB::table( 'expense_payments' );
-		$existing = self::expense_payment( $expense_id, $period );
-		if ( $existing ) {
-			$wpdb->update(
-				$p,
-				array( 'spent' => $spent, 'paid_on' => $paid_on ),
-				array( 'id' => $existing->id ),
-				array( '%f', '%s' ),
-				array( '%d' )
-			);
-		} else {
-			$wpdb->insert(
-				$p,
-				array(
-					'expense_id' => $expense_id,
-					'period'     => $period,
-					'spent'      => $spent,
-					'paid_on'    => $paid_on,
-				),
-				array( '%d', '%s', '%f', '%s' )
-			);
-		}
-	}
-
-	/**
-	 * Un-mark (delete) a payment row.
-	 *
-	 * @param int    $expense_id Expense ID.
-	 * @param string $period     Y-m.
-	 */
-	public static function unmark_expense_paid( $expense_id, $period ) {
-		global $wpdb;
-		$p = MMR_DB::table( 'expense_payments' );
-		$wpdb->delete( $p, array( 'expense_id' => $expense_id, 'period' => $period ), array( '%d', '%s' ) );
-	}
-
-	/**
-	 * Remaining recurring monthly expense for a period:
-	 * SUM(projected of active monthly) − SUM(spent recorded this period).
-	 *
-	 * @param string $period Y-m.
-	 * @return array [ projected_total, spent_total, remaining ]
-	 */
-	public static function expenses_month_summary( $period ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'recurring_expenses' );
-		$p = MMR_DB::table( 'expense_payments' );
-
-		$projected = (float) $wpdb->get_var( "SELECT COALESCE(SUM(projected),0) FROM {$t} WHERE active = 1 AND frequency = 'monthly'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-		$spent = (float) $wpdb->get_var( $wpdb->prepare(
-			"SELECT COALESCE(SUM(ep.spent),0) FROM {$p} ep JOIN {$t} e ON e.id = ep.expense_id
-			 WHERE ep.period = %s AND e.active = 1 AND e.frequency = 'monthly'",
-			$period
-		) ); // phpcs:ignore WordPress.DB.PreparedSQL
-
-		$remaining = max( 0, $projected - $spent );
-		return array( round( $projected, 2 ), round( $spent, 2 ), round( $remaining, 2 ) );
-	}
-
-	/* ---------------------------------------------------------------------
-	 * Projections
-	 * ------------------------------------------------------------------ */
-
-	/**
-	 * All projections, newest period first.
-	 *
-	 * @return array
-	 */
-	public static function projections() {
-		global $wpdb;
-		$t = MMR_DB::table( 'projections' );
-		return $wpdb->get_results( "SELECT * FROM {$t} ORDER BY period DESC" ); // phpcs:ignore WordPress.DB.PreparedSQL
-	}
-
-	/**
-	 * Insert / update a projection by period (upsert).
-	 *
-	 * @param array $data period, projected, expenses, notes.
-	 * @param int   $id   ID or 0.
-	 * @return int
-	 */
-	public static function save_projection( $data, $id = 0 ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'projections' );
-		$row = array(
-			'period'    => $data['period'],
-			'projected' => $data['projected'],
-			'expenses'  => $data['expenses'],
-			'notes'     => $data['notes'],
-		);
-		$formats = array( '%s', '%f', '%f', '%s' );
-		if ( $id ) {
-			$wpdb->update( $t, $row, array( 'id' => $id ), $formats, array( '%d' ) );
-			return $id;
-		}
-		// Upsert on period.
-		$existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$t} WHERE period = %s", $data['period'] ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-		if ( $existing ) {
-			$wpdb->update( $t, $row, array( 'id' => $existing ), $formats, array( '%d' ) );
-			return (int) $existing;
-		}
-		$wpdb->insert( $t, $row, $formats );
-		return (int) $wpdb->insert_id;
-	}
-
-	/**
-	 * Delete a projection.
-	 *
-	 * @param int $id ID.
-	 */
-	public static function delete_projection( $id ) {
-		global $wpdb;
-		$t = MMR_DB::table( 'projections' );
-		$wpdb->delete( $t, array( 'id' => $id ), array( '%d' ) );
+		return $map;
 	}
 }

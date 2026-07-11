@@ -50,13 +50,9 @@ class MMR_Import {
 			// Still compute counts so the operator sees what would be imported.
 		}
 
-		$students    = isset( $data['students'] ) && is_array( $data['students'] ) ? $data['students'] : array();
-		$classes     = isset( $data['classes'] ) && is_array( $data['classes'] ) ? $data['classes'] : array();
-		$lessons     = isset( $data['lessons'] ) && is_array( $data['lessons'] ) ? $data['lessons'] : array();
-		$settlements = isset( $data['settlements'] ) && is_array( $data['settlements'] ) ? $data['settlements'] : array();
-		$budget      = isset( $data['budget_items'] ) && is_array( $data['budget_items'] ) ? $data['budget_items'] : array();
-		$expenses    = isset( $data['recurring_expenses'] ) && is_array( $data['recurring_expenses'] ) ? $data['recurring_expenses'] : array();
-		$projections = isset( $data['projections'] ) && is_array( $data['projections'] ) ? $data['projections'] : array();
+		$students = isset( $data['students'] ) && is_array( $data['students'] ) ? $data['students'] : array();
+		$classes  = isset( $data['classes'] ) && is_array( $data['classes'] ) ? $data['classes'] : array();
+		$lessons  = isset( $data['lessons'] ) && is_array( $data['lessons'] ) ? $data['lessons'] : array();
 
 		// Build the set of known class refs / names for warning detection.
 		$class_refs = array();
@@ -78,14 +74,10 @@ class MMR_Import {
 		}
 
 		$result['counts'] = array(
-			'students'           => count( $students ),
-			'classes'            => count( $classes ),
-			'memberships'        => $membership_count,
-			'lessons'            => count( $lessons ),
-			'settlements'        => count( $settlements ),
-			'budget_items'       => count( $budget ),
-			'recurring_expenses' => count( $expenses ),
-			'projections'        => count( $projections ),
+			'students'    => count( $students ),
+			'classes'     => count( $classes ),
+			'memberships' => $membership_count,
+			'lessons'     => count( $lessons ),
 		);
 
 		// Warnings — unknown class refs on lessons.
@@ -124,7 +116,7 @@ class MMR_Import {
 		}
 
 		// ---- Commit ----
-		$this->commit( $students, $classes, $lessons, $settlements, $budget, $expenses, $projections, $result );
+		$this->commit( $students, $classes, $lessons, $result );
 		$result['committed'] = true;
 		return $result;
 	}
@@ -148,16 +140,12 @@ class MMR_Import {
 	/**
 	 * Perform the actual writes, resolving refs to real IDs.
 	 *
-	 * @param array $students    Students.
-	 * @param array $classes     Classes.
-	 * @param array $lessons     Lessons.
-	 * @param array $settlements Settlements.
-	 * @param array $budget      Budget items.
-	 * @param array $expenses    Recurring expenses.
-	 * @param array $projections Projections.
-	 * @param array $result      Result accumulator (by reference).
+	 * @param array $students Students.
+	 * @param array $classes  Classes.
+	 * @param array $lessons  Lessons.
+	 * @param array $result   Result accumulator (by reference).
 	 */
-	protected function commit( $students, $classes, $lessons, $settlements, $budget, $expenses, $projections, &$result ) {
+	protected function commit( $students, $classes, $lessons, &$result ) {
 		$student_map = array(); // ref/name => id.
 		$class_map = array();    // ref/name => id.
 		$imported = array_fill_keys( array_keys( $result['counts'] ), 0 );
@@ -238,106 +226,12 @@ class MMR_Import {
 			$imported['lessons']++;
 		}
 
-		// Settlements.
-		foreach ( $settlements as $s ) {
-			$class_ref = isset( $s['class_ref'] ) ? (string) $s['class_ref'] : '';
-			$class_id = ( '' !== $class_ref && isset( $class_map[ $class_ref ] ) ) ? $class_map[ $class_ref ] : 0;
-			MMR_Data::save_settlement( array(
-				'doc_type'    => isset( $s['doc_type'] ) ? sanitize_text_field( $s['doc_type'] ) : '',
-				'doc_number'  => isset( $s['doc_number'] ) ? sanitize_text_field( $s['doc_number'] ) : '',
-				'doc_date'    => $this->clean_date( $s['doc_date'] ?? '' ),
-				'payer_label' => isset( $s['payer_label'] ) ? sanitize_text_field( $s['payer_label'] ) : '',
-				'class_id'    => $class_id,
-				'period'      => isset( $s['period'] ) ? mmr_sanitize_period( $s['period'] ) : '',
-				'amount'      => isset( $s['amount'] ) ? mmr_sanitize_money( $s['amount'] ) : 0,
-				'ksef'        => ! empty( $s['ksef'] ) ? 1 : 0,
-				'sent'        => ! empty( $s['sent'] ) ? 1 : 0,
-				'paid'        => ! empty( $s['paid'] ) ? 1 : 0,
-				'paid_on'     => $this->clean_date( $s['paid_on'] ?? '' ),
-				'notes'       => isset( $s['notes'] ) ? sanitize_textarea_field( $s['notes'] ) : '',
-			) );
-			$imported['settlements']++;
-		}
-
-		// Budget items.
-		foreach ( $budget as $b ) {
-			$kind = isset( $b['kind'] ) && in_array( $b['kind'], array( 'asset', 'liability', 'reserve', 'note_only' ), true ) ? $b['kind'] : 'asset';
-			MMR_Data::save_budget_item( array(
-				'label'      => isset( $b['label'] ) ? sanitize_text_field( $b['label'] ) : '',
-				'amount'     => isset( $b['amount'] ) ? mmr_sanitize_money( $b['amount'] ) : 0,
-				'kind'       => $kind,
-				'sort_order' => isset( $b['sort_order'] ) ? (int) $b['sort_order'] : 0,
-				'notes'      => isset( $b['notes'] ) ? sanitize_textarea_field( $b['notes'] ) : '',
-			) );
-			$imported['budget_items']++;
-		}
-
-		// Recurring expenses + their payment rows.
-		foreach ( $expenses as $e ) {
-			$pay_type = isset( $e['pay_type'] ) && in_array( $e['pay_type'], array( 'manual', 'subscription' ), true ) ? $e['pay_type'] : 'manual';
-			$frequency = isset( $e['frequency'] ) && in_array( $e['frequency'], array( 'monthly', 'yearly' ), true ) ? $e['frequency'] : 'monthly';
-			$category = isset( $e['category'] ) && in_array( $e['category'], array( 'critical', 'moderate', 'whim' ), true ) ? $e['category'] : 'moderate';
-			$expense_id = MMR_Data::save_expense( array(
-				'title'     => isset( $e['title'] ) ? sanitize_text_field( $e['title'] ) : '',
-				'projected' => isset( $e['projected'] ) ? mmr_sanitize_money( $e['projected'] ) : 0,
-				'pay_type'  => $pay_type,
-				'frequency' => $frequency,
-				'category'  => $category,
-				'due_note'  => isset( $e['due_note'] ) ? sanitize_text_field( $e['due_note'] ) : '',
-				'active'    => ( isset( $e['active'] ) && ! $e['active'] ) ? 0 : 1,
-			) );
-			$imported['recurring_expenses']++;
-			if ( ! empty( $e['payments'] ) && is_array( $e['payments'] ) ) {
-				foreach ( $e['payments'] as $payment ) {
-					$pp = isset( $payment['period'] ) ? mmr_sanitize_period( $payment['period'] ) : '';
-					if ( ! $pp ) {
-						continue;
-					}
-					MMR_Data::mark_expense_paid(
-						$expense_id,
-						$pp,
-						isset( $payment['spent'] ) ? mmr_sanitize_money( $payment['spent'] ) : 0,
-						$this->clean_date( $payment['paid_on'] ?? '' )
-					);
-				}
-			}
-		}
-
-		// Projections.
-		foreach ( $projections as $p ) {
-			$period = isset( $p['period'] ) ? mmr_sanitize_period( $p['period'] ) : '';
-			if ( ! $period ) {
-				continue;
-			}
-			MMR_Data::save_projection( array(
-				'period'    => $period,
-				'projected' => isset( $p['projected'] ) ? mmr_sanitize_money( $p['projected'] ) : 0,
-				'expenses'  => isset( $p['expenses'] ) ? mmr_sanitize_money( $p['expenses'] ) : 0,
-				'notes'     => isset( $p['notes'] ) ? sanitize_textarea_field( $p['notes'] ) : '',
-			) );
-			$imported['projections']++;
-		}
-
 		$result['imported'] = $imported;
 	}
 
 	/**
-	 * Normalise a date field to Y-m-d or empty string.
-	 *
-	 * @param string $value Raw date.
-	 * @return string
-	 */
-	protected function clean_date( $value ) {
-		$value = trim( (string) $value );
-		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ) {
-			return $value;
-		}
-		return '';
-	}
-
-	/**
 	 * Export every table as a structured array suitable for re-import.
-	 * Uses stable string refs (r{id}) so a re-import re-links correctly.
+	 * Uses stable string refs (s{id} / c{id}) so a re-import re-links correctly.
 	 *
 	 * @return array
 	 */
@@ -345,16 +239,12 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'            => 1,
-			'exported_at'        => current_time( 'mysql' ),
-			'plugin_version'     => MMR_VERSION,
-			'students'           => array(),
-			'classes'            => array(),
-			'lessons'            => array(),
-			'settlements'        => array(),
-			'budget_items'       => array(),
-			'recurring_expenses' => array(),
-			'projections'        => array(),
+			'version'        => 2,
+			'exported_at'    => current_time( 'mysql' ),
+			'plugin_version' => MMR_VERSION,
+			'students'       => array(),
+			'classes'        => array(),
+			'lessons'        => array(),
 		);
 
 		$student_ref = array();
@@ -404,64 +294,6 @@ class MMR_Import {
 				'slot'         => (int) $l->slot,
 				'fee_snapshot' => (float) $l->fee_snapshot,
 				'note'         => $l->note,
-			);
-		}
-
-		foreach ( MMR_Data::settlements() as $s ) {
-			$out['settlements'][] = array(
-				'doc_type'    => $s->doc_type,
-				'doc_number'  => $s->doc_number,
-				'doc_date'    => $s->doc_date,
-				'payer_label' => $s->payer_label,
-				'class_ref'   => ( $s->class_id && isset( $class_ref[ (int) $s->class_id ] ) ) ? $class_ref[ (int) $s->class_id ] : null,
-				'period'      => $s->period,
-				'amount'      => (float) $s->amount,
-				'ksef'        => (bool) $s->ksef,
-				'sent'        => (bool) $s->sent,
-				'paid'        => (bool) $s->paid,
-				'paid_on'     => $s->paid_on,
-				'notes'       => $s->notes,
-			);
-		}
-
-		foreach ( MMR_Data::budget_items() as $b ) {
-			$out['budget_items'][] = array(
-				'label'      => $b->label,
-				'amount'     => (float) $b->amount,
-				'kind'       => $b->kind,
-				'sort_order' => (int) $b->sort_order,
-				'notes'      => $b->notes,
-			);
-		}
-
-		foreach ( MMR_Data::expenses() as $e ) {
-			$payments = array();
-			$rows = $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . MMR_DB::table( 'expense_payments' ) . ' WHERE expense_id = %d ORDER BY period ASC', $e->id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-			foreach ( $rows as $r ) {
-				$payments[] = array(
-					'period'  => $r->period,
-					'spent'   => (float) $r->spent,
-					'paid_on' => $r->paid_on,
-				);
-			}
-			$out['recurring_expenses'][] = array(
-				'title'     => $e->title,
-				'projected' => (float) $e->projected,
-				'pay_type'  => $e->pay_type,
-				'frequency' => $e->frequency,
-				'category'  => $e->category,
-				'due_note'  => $e->due_note,
-				'active'    => (bool) $e->active,
-				'payments'  => $payments,
-			);
-		}
-
-		foreach ( MMR_Data::projections() as $p ) {
-			$out['projections'][] = array(
-				'period'    => $p->period,
-				'projected' => (float) $p->projected,
-				'expenses'  => (float) $p->expenses,
-				'notes'     => $p->notes,
 			);
 		}
 

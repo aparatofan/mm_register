@@ -1,6 +1,6 @@
 <?php
 /**
- * Database schema & table-name helpers.
+ * Database schema, upgrades & table-name helpers.
  *
  * @package MM_Register
  */
@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Handles table creation (dbDelta) and provides prefixed table names.
+ * Handles table creation (dbDelta), version upgrades and prefixed table names.
  */
 class MMR_DB {
 
@@ -36,7 +36,95 @@ class MMR_DB {
 	}
 
 	/**
-	 * Create / upgrade all tables. Called on activation.
+	 * Activation entry point: run pending upgrades, then create tables.
+	 */
+	public static function activate() {
+		self::upgrade_legacy();
+		self::install();
+	}
+
+	/**
+	 * Run on plugin load: upgrade + dbDelta when the stored version is behind.
+	 * Idempotent — does nothing once mmr_db_version matches MMR_DB_VERSION.
+	 */
+	public static function maybe_upgrade() {
+		if ( get_option( 'mmr_db_version' ) === MMR_DB_VERSION ) {
+			return;
+		}
+		self::upgrade_legacy();
+		self::install();
+	}
+
+	/**
+	 * v1 → v2 upgrade: back up the legacy tables to a JSON file, then drop them.
+	 *
+	 * The backup is best effort — if the uploads directory cannot be written,
+	 * the failure is logged and the upgrade continues. Only tables that
+	 * actually exist are dumped/dropped, so re-running is harmless.
+	 */
+	protected static function upgrade_legacy() {
+		global $wpdb;
+
+		$existing = array();
+		foreach ( self::legacy_keys() as $key ) {
+			$table = self::table( $key );
+			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			if ( $found === $table ) {
+				$existing[ $key ] = $table;
+			}
+		}
+		if ( empty( $existing ) ) {
+			return;
+		}
+
+		// 1. Backup first.
+		$dump = array(
+			'reason'      => 'pre-v2 upgrade — these tables were dropped by MM Register 2.0',
+			'exported_at' => current_time( 'mysql' ),
+			'tables'      => array(),
+		);
+		foreach ( $existing as $key => $table ) {
+			$dump['tables'][ $key ] = $wpdb->get_results( "SELECT * FROM {$table}", ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+		}
+		self::write_backup( $dump );
+
+		// 2. Then drop.
+		foreach ( $existing as $table ) {
+			// Table names come from the fixed whitelist above; safe to interpolate.
+			$wpdb->query( "DROP TABLE IF EXISTS {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+		}
+	}
+
+	/**
+	 * Write the pre-drop dump into wp-content/uploads/mm-register-backups/.
+	 * Best effort: logs and returns on any failure instead of aborting.
+	 *
+	 * @param array $dump Backup payload.
+	 */
+	protected static function write_backup( $dump ) {
+		$uploads = wp_upload_dir();
+		if ( ! empty( $uploads['error'] ) ) {
+			error_log( 'MM Register: pre-v2 backup skipped — ' . $uploads['error'] ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+			return;
+		}
+		$dir = trailingslashit( $uploads['basedir'] ) . 'mm-register-backups';
+		if ( ! wp_mkdir_p( $dir ) ) {
+			error_log( 'MM Register: pre-v2 backup skipped — could not create ' . $dir ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+			return;
+		}
+		// Keep the directory out of casual listings.
+		if ( ! file_exists( $dir . '/index.php' ) ) {
+			@file_put_contents( $dir . '/index.php', "<?php // Silence is golden.\n" ); // phpcs:ignore
+		}
+		$file = $dir . '/pre-v2-' . gmdate( 'Ymd-His' ) . '.json';
+		$json = wp_json_encode( $dump, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE );
+		if ( false === @file_put_contents( $file, $json ) ) { // phpcs:ignore
+			error_log( 'MM Register: pre-v2 backup skipped — could not write ' . $file ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+		}
+	}
+
+	/**
+	 * Create / upgrade the plugin tables.
 	 */
 	public static function install() {
 		global $wpdb;
@@ -49,11 +137,6 @@ class MMR_DB {
 		$classes = self::table( 'classes' );
 		$members = self::table( 'class_members' );
 		$lessons = self::table( 'lessons' );
-		$settlements = self::table( 'settlements' );
-		$budget = self::table( 'budget_items' );
-		$expenses = self::table( 'recurring_expenses' );
-		$payments = self::table( 'expense_payments' );
-		$projections = self::table( 'projections' );
 
 		$sql = array();
 
@@ -112,81 +195,11 @@ class MMR_DB {
 			KEY date_slot (lesson_date, slot)
 		) {$charset_collate};";
 
-		$sql[] = "CREATE TABLE {$settlements} (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			doc_type VARCHAR(30) NULL DEFAULT NULL,
-			doc_number VARCHAR(120) NULL DEFAULT NULL,
-			doc_date DATE NULL DEFAULT NULL,
-			payer_label VARCHAR(190) NULL DEFAULT NULL,
-			class_id BIGINT UNSIGNED NULL DEFAULT NULL,
-			period CHAR(7) NULL DEFAULT NULL,
-			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			ksef TINYINT(1) NOT NULL DEFAULT 0,
-			sent TINYINT(1) NOT NULL DEFAULT 0,
-			paid TINYINT(1) NOT NULL DEFAULT 0,
-			paid_on DATE NULL DEFAULT NULL,
-			notes TEXT NULL,
-			PRIMARY KEY  (id),
-			KEY paid (paid),
-			KEY period (period),
-			KEY class_id (class_id),
-			KEY doc_date (doc_date)
-		) {$charset_collate};";
-
-		$sql[] = "CREATE TABLE {$budget} (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			label VARCHAR(190) NOT NULL,
-			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			kind ENUM('asset','liability','reserve','note_only') NOT NULL DEFAULT 'asset',
-			sort_order INT NOT NULL DEFAULT 0,
-			notes TEXT NULL,
-			updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
-			PRIMARY KEY  (id),
-			KEY kind (kind),
-			KEY sort_order (sort_order)
-		) {$charset_collate};";
-
-		$sql[] = "CREATE TABLE {$expenses} (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			title VARCHAR(190) NOT NULL,
-			projected DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			pay_type ENUM('manual','subscription') NOT NULL DEFAULT 'manual',
-			frequency ENUM('monthly','yearly') NOT NULL DEFAULT 'monthly',
-			category ENUM('critical','moderate','whim') NOT NULL DEFAULT 'moderate',
-			due_note VARCHAR(190) NULL DEFAULT NULL,
-			active TINYINT(1) NOT NULL DEFAULT 1,
-			PRIMARY KEY  (id),
-			KEY active (active),
-			KEY frequency (frequency)
-		) {$charset_collate};";
-
-		$sql[] = "CREATE TABLE {$payments} (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			expense_id BIGINT UNSIGNED NOT NULL,
-			period CHAR(7) NOT NULL,
-			spent DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			paid_on DATE NULL DEFAULT NULL,
-			PRIMARY KEY  (id),
-			KEY expense_id (expense_id),
-			KEY period (period),
-			UNIQUE KEY expense_period (expense_id, period)
-		) {$charset_collate};";
-
-		$sql[] = "CREATE TABLE {$projections} (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			period CHAR(7) NOT NULL,
-			projected DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			expenses DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-			notes TEXT NULL,
-			PRIMARY KEY  (id),
-			UNIQUE KEY period (period)
-		) {$charset_collate};";
-
 		foreach ( $sql as $statement ) {
 			dbDelta( $statement );
 		}
 
-		update_option( 'mmr_db_version', MMR_VERSION );
+		update_option( 'mmr_db_version', MMR_DB_VERSION );
 	}
 
 	/**
@@ -200,6 +213,16 @@ class MMR_DB {
 			'classes',
 			'class_members',
 			'lessons',
+		);
+	}
+
+	/**
+	 * Logical keys of the v1 tables removed in v2.
+	 *
+	 * @return string[]
+	 */
+	public static function legacy_keys() {
+		return array(
 			'settlements',
 			'budget_items',
 			'recurring_expenses',
@@ -228,7 +251,7 @@ class MMR_DB {
 	 */
 	public static function is_empty() {
 		global $wpdb;
-		foreach ( array( 'students', 'classes', 'lessons', 'settlements', 'budget_items', 'recurring_expenses', 'projections' ) as $key ) {
+		foreach ( array( 'students', 'classes', 'class_members', 'lessons' ) as $key ) {
 			$table = self::table( $key );
 			$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL
 			if ( $count > 0 ) {

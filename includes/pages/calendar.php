@@ -46,7 +46,7 @@ $prev_week = wp_date( 'Y-m-d', strtotime( '-7 days', $monday_ts ) );
 $next_week = wp_date( 'Y-m-d', strtotime( '+7 days', $monday_ts ) );
 $today = current_time( 'Y-m-d' );
 ?>
-<div class="wrap mmr-wrap mmr-calendar" id="mmr-calendar"
+<div class="mmr-wrap mmr-calendar" id="mmr-calendar"
 	data-monday="<?php echo esc_attr( $monday ); ?>"
 	data-week-end="<?php echo esc_attr( $week_end ); ?>">
 
@@ -101,7 +101,7 @@ $today = current_time( 'Y-m-d' );
 							data-note="<?php echo esc_attr( $lesson->note ); ?>"
 						<?php endif; ?>>
 						<?php if ( $lesson ) : ?>
-							<span class="mmr-slot-name"><?php echo esc_html( $lesson->class_name ); ?><?php if ( $lesson->note ) : ?><span class="mmr-slot-note" title="<?php echo esc_attr( $lesson->note ); ?>">*</span><?php endif; ?></span>
+							<span class="mmr-slot-name" title="<?php echo esc_attr( $lesson->class_name ); ?>"><?php echo esc_html( $lesson->class_name ); ?><?php if ( $lesson->note ) : ?><span class="mmr-slot-note" title="<?php echo esc_attr( $lesson->note ); ?>">*</span><?php endif; ?></span>
 							<span class="mmr-slot-fee"><?php echo mmr_money_esc( $lesson->fee_snapshot ); ?></span>
 						<?php else : ?>
 							<span class="mmr-slot-plus">+</span>

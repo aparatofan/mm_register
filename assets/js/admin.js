@@ -97,27 +97,21 @@
 				} else {
 					clearMembers( modal );
 				}
-				var kind = opener.getAttribute( 'data-kind' );
-				if ( kind ) {
-					var kindField = form.querySelector( '[data-field="kind"]' );
-					if ( kindField ) { kindField.value = kind; }
-				}
 				openModal( modal );
 				return;
 			}
 			if ( e.target.closest( '.mmr-close-modal' ) ) {
 				e.preventDefault();
-				var box = e.target.closest( '.mmr-modal' );
-				closeModal( box );
+				closeModal( e.target.closest( '.mmr-modal-overlay' ) );
 			}
 			// Click on backdrop closes.
-			if ( e.target.classList && e.target.classList.contains( 'mmr-modal' ) ) {
+			if ( e.target.classList && e.target.classList.contains( 'mmr-modal-overlay' ) ) {
 				closeModal( e.target );
 			}
 		} );
 		document.addEventListener( 'keydown', function ( e ) {
 			if ( e.key === 'Escape' ) {
-				document.querySelectorAll( '.mmr-modal:not([hidden])' ).forEach( closeModal );
+				document.querySelectorAll( '.mmr-modal-overlay:not([hidden])' ).forEach( closeModal );
 				closePicker();
 				closePopover();
 			}
@@ -158,7 +152,7 @@
 		document.addEventListener( 'click', function ( e ) {
 			if ( e.target.id === 'mmr-add-member' ) {
 				e.preventDefault();
-				addMemberRow( e.target.closest( '.mmr-modal' ), null );
+				addMemberRow( e.target.closest( '.mmr-modal-overlay' ), null );
 			}
 			if ( e.target.classList && e.target.classList.contains( 'mmr-remove-member' ) ) {
 				e.preventDefault();
@@ -215,7 +209,7 @@
 		slot.setAttribute( 'data-fee', lesson.fee );
 		slot.setAttribute( 'data-note', lesson.note || '' );
 		slot.innerHTML = '';
-		var name = el( 'span', { 'class': 'mmr-slot-name' }, lesson.class_name );
+		var name = el( 'span', { 'class': 'mmr-slot-name', 'title': lesson.class_name }, lesson.class_name );
 		if ( lesson.note ) {
 			var star = el( 'span', { 'class': 'mmr-slot-note', 'title': lesson.note }, '*' );
 			name.appendChild( star );
@@ -330,22 +324,23 @@
 		var name = slot.querySelector( '.mmr-slot-name' );
 		pop.appendChild( el( 'h4', null, name ? name.textContent.replace( '*', '' ) : '' ) );
 
-		var feeLabel = el( 'label', null, 'Fee override (zł)' );
+		// Same field grid as the modals (single column at popover width).
+		function field( labelText, input ) {
+			var wrap = el( 'div', { 'class': 'mmr-field' } );
+			wrap.appendChild( el( 'label', null, labelText ) );
+			wrap.appendChild( input );
+			return wrap;
+		}
+		var grid = el( 'div', { 'class': 'mmr-form-grid' } );
 		var feeInput = el( 'input', { 'type': 'text', 'value': slot.getAttribute( 'data-fee' ) || '' } );
-		feeLabel.appendChild( feeInput );
-		pop.appendChild( feeLabel );
-
-		var noteLabel = el( 'label', null, 'Note' );
+		grid.appendChild( field( 'Fee override (zł)', feeInput ) );
 		var noteInput = el( 'input', { 'type': 'text', 'value': slot.getAttribute( 'data-note' ) || '' } );
-		noteLabel.appendChild( noteInput );
-		pop.appendChild( noteLabel );
-
-		var moveLabel = el( 'label', null, 'Move to date / slot' );
+		grid.appendChild( field( 'Note', noteInput ) );
 		var moveDate = el( 'input', { 'type': 'date', 'value': slot.getAttribute( 'data-date' ) } );
-		moveLabel.appendChild( moveDate );
-		pop.appendChild( moveLabel );
+		grid.appendChild( field( 'Move to date', moveDate ) );
 		var moveSlot = el( 'input', { 'type': 'number', 'min': '1', 'max': String( cfg.slots || 12 ), 'value': slot.getAttribute( 'data-slot' ) } );
-		pop.appendChild( moveSlot );
+		grid.appendChild( field( 'Move to slot', moveSlot ) );
+		pop.appendChild( grid );
 
 		var actions = el( 'div', { 'class': 'mmr-popover-actions' } );
 		var saveBtn = el( 'button', { 'class': 'button button-primary', 'type': 'button' }, 'Save' );
@@ -510,112 +505,89 @@
 					splitRow.hidden = ! splitRow.hidden;
 					toggle.setAttribute( 'aria-expanded', String( ! splitRow.hidden ) );
 				}
-				return;
-			}
-
-			var recBtn = e.target.closest( '.mmr-record-settlement' );
-			if ( recBtn ) {
-				e.preventDefault();
-				openSettlementModal( JSON.parse( recBtn.getAttribute( 'data-json' ) ) );
 			}
 		} );
 
-		var perMember = document.getElementById( 'mmr-per-member' );
-		if ( perMember ) {
-			perMember.addEventListener( 'change', function () {
-				toggleSettlementMode( perMember.checked );
-			} );
+		initSummaryExport();
+	}
+
+	/* Copy / CSV export of the per-student summary. */
+
+	function summaryData() {
+		var node = document.getElementById( 'mmr-settlement-summary-data' );
+		if ( ! node ) { return null; }
+		try {
+			return JSON.parse( node.textContent );
+		} catch ( err ) {
+			return null;
 		}
 	}
 
-	function toggleSettlementMode( isPerMember ) {
-		var single = document.getElementById( 'mmr-settle-single' );
-		var pm = document.getElementById( 'mmr-settle-permember' );
-		if ( single ) {
-			single.hidden = isPerMember;
-			single.querySelectorAll( 'input, textarea, select' ).forEach( function ( f ) { f.disabled = isPerMember; } );
-		}
-		if ( pm ) {
-			pm.hidden = ! isPerMember;
-			pm.querySelectorAll( 'input, textarea, select' ).forEach( function ( f ) { f.disabled = ! isPerMember; } );
-		}
+	function summaryFeedback( message ) {
+		var out = document.getElementById( 'mmr-copy-feedback' );
+		if ( ! out ) { return; }
+		out.textContent = message;
+		setTimeout( function () { out.textContent = ''; }, 3000 );
 	}
 
-	function openSettlementModal( data ) {
-		var modal = document.getElementById( 'mmr-settlement-modal' );
-		if ( ! modal ) { return; }
-		var form = modal.querySelector( 'form' );
-		resetForm( form );
-		form.querySelector( '[data-field="class_id"]' ).value = data.class_id;
-		var payer = form.querySelector( '[data-field="payer_label"]' );
-		if ( payer ) { payer.value = data.class_name; }
-		var amount = form.querySelector( '[data-field="amount"]' );
-		if ( amount ) { amount.value = Number( data.amount ).toFixed( 2 ); }
-		document.getElementById( 'mmr-settle-class' ).textContent = data.class_name;
+	function initSummaryExport() {
+		var copyBtn = document.getElementById( 'mmr-copy-summary' );
+		var csvBtn = document.getElementById( 'mmr-download-csv' );
+		if ( ! copyBtn && ! csvBtn ) { return; }
 
-		// Per-member rows.
-		var pmRows = document.getElementById( 'mmr-settle-members-rows' );
-		var toggleWrap = modal.querySelector( '.mmr-per-member-toggle' );
-		pmRows.innerHTML = '';
-		if ( data.is_group && data.members && data.members.length ) {
-			toggleWrap.hidden = false;
-			data.members.forEach( function ( m ) {
-				var tr = el( 'tr' );
-				var td1 = el( 'td' );
-				td1.appendChild( el( 'span', null, m.student_name ) );
-				td1.appendChild( el( 'input', { 'type': 'hidden', 'name': 'member_name[]', 'value': m.student_name } ) );
-				var td2 = el( 'td' );
-				var amt = el( 'input', { 'type': 'text', 'name': 'member_amount[]', 'value': Number( m.total ).toFixed( 2 ) } );
-				td2.appendChild( amt );
-				tr.appendChild( td1 );
-				tr.appendChild( td2 );
-				pmRows.appendChild( tr );
-			} );
-		} else {
-			toggleWrap.hidden = true;
-		}
-		var perMember = document.getElementById( 'mmr-per-member' );
-		if ( perMember ) { perMember.checked = false; }
-		toggleSettlementMode( false );
-
-		openModal( modal );
-	}
-
-	/* ---------------------------------------------------------------
-	 * Receivables inline toggles
-	 * ------------------------------------------------------------- */
-
-	function initReceivables() {
-		var table = document.querySelector( '.mmr-receivables-table' );
-		if ( ! table ) { return; }
-		table.addEventListener( 'change', function ( e ) {
-			var toggle = e.target.closest( '.mmr-toggle' );
-			if ( ! toggle ) { return; }
-			var row = toggle.closest( 'tr' );
-			var id = row.getAttribute( 'data-id' );
-			var field = toggle.getAttribute( 'data-field' );
-			ajax( 'mmr_toggle_settlement', { id: id, field: field, value: toggle.checked ? 1 : 0 } ).then( function ( res ) {
-				if ( res && res.success ) {
-					var totalEl = document.getElementById( 'mmr-unpaid-total' );
-					if ( totalEl ) { totalEl.textContent = res.data.unpaid_total; }
-					if ( field === 'paid' ) {
-						var cell = row.querySelector( '.mmr-paid-on' );
-						if ( cell ) { cell.textContent = res.data.paid_on ? formatDate( res.data.paid_on ) : '—'; }
-						row.classList.toggle( 'mmr-paid', toggle.checked );
-						row.classList.toggle( 'mmr-unpaid', ! toggle.checked );
-					}
+		if ( copyBtn ) {
+			copyBtn.addEventListener( 'click', function () {
+				var data = summaryData();
+				if ( ! data ) { return; }
+				// Tab-separated with display formatting — pastes cleanly into a sheet.
+				var lines = [ data.headers.join( '\t' ) ];
+				data.rows.forEach( function ( r ) {
+					lines.push( [ r.student, r.lessons, formatMoney( r.lesson_total ), formatMoney( r.tbt ), formatMoney( r.to_bill ) ].join( '\t' ) );
+				} );
+				lines.push( [ 'TOTAL', '', '', '', formatMoney( data.total ) ].join( '\t' ) );
+				var text = lines.join( '\n' );
+				if ( navigator.clipboard && navigator.clipboard.writeText ) {
+					navigator.clipboard.writeText( text ).then( function () {
+						summaryFeedback( 'Copied.' );
+					}, function () {
+						summaryFeedback( i18n.error || 'Error' );
+					} );
 				} else {
-					toggle.checked = ! toggle.checked;
-					alert( i18n.error || 'Error' );
+					var ta = document.createElement( 'textarea' );
+					ta.value = text;
+					document.body.appendChild( ta );
+					ta.select();
+					document.execCommand( 'copy' );
+					ta.remove();
+					summaryFeedback( 'Copied.' );
 				}
 			} );
-		} );
-	}
+		}
 
-	function formatDate( ymd ) {
-		var p = String( ymd ).split( '-' );
-		if ( p.length === 3 ) { return parseInt( p[ 2 ], 10 ) + '.' + parseInt( p[ 1 ], 10 ) + '.' + p[ 0 ]; }
-		return ymd;
+		if ( csvBtn ) {
+			csvBtn.addEventListener( 'click', function () {
+				var data = summaryData();
+				if ( ! data ) { return; }
+				function esc( value ) {
+					var s = String( value );
+					return /[",\n]/.test( s ) ? '"' + s.replace( /"/g, '""' ) + '"' : s;
+				}
+				var lines = [ data.headers.map( esc ).join( ',' ) ];
+				data.rows.forEach( function ( r ) {
+					lines.push( [ esc( r.student ), r.lessons, Number( r.lesson_total ).toFixed( 2 ), Number( r.tbt ).toFixed( 2 ), Number( r.to_bill ).toFixed( 2 ) ].join( ',' ) );
+				} );
+				lines.push( [ 'TOTAL', '', '', '', Number( data.total ).toFixed( 2 ) ].join( ',' ) );
+				// BOM so Excel opens the UTF-8 file with Polish characters intact.
+				var blob = new Blob( [ '\uFEFF' + lines.join( '\r\n' ) ], { type: 'text/csv;charset=utf-8' } );
+				var a = document.createElement( 'a' );
+				a.href = URL.createObjectURL( blob );
+				a.download = 'settlement-' + data.period + '.csv';
+				document.body.appendChild( a );
+				a.click();
+				a.remove();
+				URL.revokeObjectURL( a.href );
+			} );
+		}
 	}
 
 	/* ---------------------------------------------------------------
@@ -627,7 +599,6 @@
 		initMembersRepeater();
 		initCalendar();
 		initSettlement();
-		initReceivables();
 	} );
 
 } )();

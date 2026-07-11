@@ -14,16 +14,26 @@
 	--mmr-neg: #b3261e;
 }
 
+/* Page wrapper: replaces core .wrap — full admin content width, no ceiling. */
 .mmr-wrap {
+	margin: 10px 20px 0 2px;
+	max-width: none;
+	width: auto;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-	max-width: 1400px;
 }
+.mmr-wrap, .mmr-wrap *, .mmr-wrap *::before, .mmr-wrap *::after { box-sizing: border-box; }
+
+.mmr-wrap table { width: 100%; table-layout: fixed; }
+.mmr-wrap table td, .mmr-wrap table th { overflow-wrap: break-word; }
 
 .mmr-page-title {
 	display: flex;
 	align-items: baseline;
 	gap: .6em;
-	margin-bottom: .4em;
+	margin: 0 0 .4em;
+	font-size: 23px;
+	font-weight: 400;
+	line-height: 1.3;
 }
 .mmr-week-range {
 	font-size: 14px;
@@ -43,6 +53,7 @@
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 12px;
+	width: 100%;
 	margin: 12px 0;
 	padding: 8px 10px;
 	background: var(--mmr-bg-soft);
@@ -62,14 +73,18 @@
 .mmr-total-chip strong { font-variant-numeric: tabular-nums; }
 .mmr-total-month strong { color: var(--mmr-accent); }
 
-/* Calendar grid ------------------------------------------------------- */
+/* Calendar grid --------------------------------------------------------
+   minmax(0, 1fr) is mandatory: plain 1fr lets long class names push
+   columns past the container and cause horizontal scroll. */
 .mmr-grid {
 	display: grid;
-	grid-template-columns: repeat(var(--mmr-cols, 5), 1fr);
-	gap: 6px;
+	grid-template-columns: repeat(var(--mmr-cols, 5), minmax(0, 1fr));
+	gap: 12px;
+	width: 100%;
 	margin-top: 8px;
 }
 .mmr-col {
+	min-width: 0;
 	border: 1px solid var(--mmr-border);
 	border-radius: 6px;
 	overflow: hidden;
@@ -103,7 +118,7 @@
 .mmr-slot.is-empty { color: #c3c9d2; }
 .mmr-slot.is-empty .mmr-slot-plus { font-size: 14px; }
 .mmr-slot.is-filled { background: #fff; }
-.mmr-slot-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mmr-slot-name { min-width: 0; flex: 1 1 auto; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mmr-slot-note { color: var(--mmr-accent); margin-left: 2px; }
 .mmr-slot-fee { color: var(--mmr-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mmr-col-total {
@@ -174,9 +189,10 @@
 	padding: 12px;
 }
 .mmr-popover h4 { margin: 0 0 8px; }
-.mmr-popover label { display: block; font-size: 12px; margin-bottom: 8px; }
-.mmr-popover input, .mmr-popover select { width: 100%; box-sizing: border-box; }
-.mmr-popover-actions { display: flex; justify-content: space-between; gap: 6px; margin-top: 6px; }
+/* The popover uses the same .mmr-form-grid/.mmr-field system as the modals,
+   collapsed to a single column at its narrow width. */
+.mmr-popover .mmr-form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mmr-popover-actions { display: flex; justify-content: space-between; gap: 6px; margin-top: 12px; }
 
 /* Tables -------------------------------------------------------------- */
 .mmr-table { margin-top: 8px; }
@@ -195,36 +211,14 @@
 .mmr-subtable th, .mmr-subtable td { padding: 4px 8px; border-bottom: 1px solid var(--mmr-border); font-size: 12px; text-align: left; }
 
 .mmr-settle-row td { vertical-align: top; }
-
-/* Cards --------------------------------------------------------------- */
-.mmr-cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
-.mmr-card {
-	flex: 1 1 160px;
-	padding: 12px 14px;
-	background: #fff;
-	border: 1px solid var(--mmr-border);
-	border-radius: 6px;
-}
-.mmr-card-accent { border-color: var(--mmr-accent); background: var(--mmr-accent-soft); }
-.mmr-card-label { font-size: 12px; color: var(--mmr-muted); }
-.mmr-card-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.mmr-section-title { margin: 24px 0 8px; }
+.mmr-table-scroll { overflow-x: auto; }
+.mmr-foot-label { text-align: right; }
 
 .mmr-filterbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
 
-/* Budget -------------------------------------------------------------- */
-.mmr-budget-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: start; }
-.mmr-budget-summary { position: sticky; top: 40px; }
 .mmr-summary-table { width: 100%; border-collapse: collapse; }
 .mmr-summary-table td { padding: 6px 4px; border-bottom: 1px solid var(--mmr-border); font-size: 13px; }
-.mmr-summary-strong td { font-weight: 700; background: var(--mmr-bg-soft); }
-.mmr-summary-final td { font-weight: 700; font-size: 15px; color: var(--mmr-accent); border-top: 2px solid var(--mmr-accent); }
-
-/* Expenses ------------------------------------------------------------ */
-.mmr-markpaid { display: inline-flex; gap: 4px; align-items: center; }
-.mmr-cat { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-.mmr-cat-critical { background: #fce8e6; color: var(--mmr-neg); }
-.mmr-cat-moderate { background: #fef7e0; color: #8a6d00; }
-.mmr-cat-whim { background: #e8f0fe; color: var(--mmr-accent); }
 
 /* Quick add ----------------------------------------------------------- */
 .mmr-quickadd {
@@ -238,7 +232,7 @@
 .mmr-quickadd-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 /* Modals -------------------------------------------------------------- */
-.mmr-modal {
+.mmr-modal-overlay {
 	position: fixed;
 	inset: 0;
 	background: rgba(0,0,0,.4);
@@ -249,26 +243,63 @@
 	padding: 40px 16px;
 	overflow-y: auto;
 }
-.mmr-modal[hidden] { display: none; }
-.mmr-modal-box {
+.mmr-modal-overlay[hidden] { display: none; }
+.mmr-modal {
+	width: min(760px, calc(100vw - 48px));
+	max-width: 100%;
 	background: #fff;
 	border-radius: 8px;
-	padding: 20px 24px;
-	width: 460px;
-	max-width: 100%;
 	box-shadow: 0 12px 40px rgba(0,0,0,.25);
 }
-.mmr-modal-wide { width: 640px; }
+.mmr-modal__body {
+	padding: 24px;
+	max-height: calc(100vh - 180px);
+	overflow-y: auto;
+	overflow-x: hidden;
+}
 .mmr-modal-title { margin-top: 0; }
 .mmr-modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
-.mmr-modal-actions .mmr-delete-btn { margin-left: auto; }
-.mmr-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
-.mmr-form-grid p { margin: 6px 0; }
 .mmr-delete-btn { color: var(--mmr-neg); }
 
-.mmr-members-table { width: 100%; border-collapse: collapse; }
-.mmr-members-table th, .mmr-members-table td { padding: 4px; text-align: left; font-size: 12px; }
-.mmr-member-select { min-width: 220px; }
+/* Modal form grid: every field wrapper gets min-width:0 so intrinsic input
+   widths can never push a column past the modal edge. */
+.mmr-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.mmr-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.mmr-field--full { grid-column: 1 / -1; }
+.mmr-field label { font-size: 12px; font-weight: 600; }
+
+.mmr-form-grid input,
+.mmr-form-grid select,
+.mmr-form-grid textarea {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0;
+}
+
+/* Members repeater */
+.mmr-member-row { display: grid; grid-template-columns: minmax(0, 1fr) 140px 32px; gap: 12px; align-items: center; margin-bottom: 8px; }
+.mmr-member-row > select,
+.mmr-member-row > input {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0;
+}
+.mmr-member-row--head { font-size: 12px; font-weight: 600; color: var(--mmr-muted); margin-bottom: 4px; }
+
+@media (max-width: 640px) {
+	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }
+	.mmr-member-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Row actions (Edit + Archive/Restore) */
+.mmr-row-actions { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+
+/* Small fixed-width controls are the only allowed px widths. */
+.mmr-input-fee { width: 90px; }
 
 /* Tools --------------------------------------------------------------- */
 .mmr-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
@@ -281,10 +312,8 @@
 
 /* Mobile -------------------------------------------------------------- */
 @media (max-width: 782px) {
-	.mmr-budget-layout { grid-template-columns: 1fr; }
 	.mmr-day-tabs { display: flex; }
-	.mmr-grid { grid-template-columns: 1fr; }
+	.mmr-grid { grid-template-columns: minmax(0, 1fr); }
 	.mmr-col { display: none; }
 	.mmr-col.is-active { display: block; }
-	.mmr-form-grid { grid-template-columns: 1fr; }
 }

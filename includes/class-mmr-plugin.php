@@ -62,12 +62,10 @@ class MMR_Plugin {
 	}
 
 	/**
-	 * Run dbDelta if the plugin was updated without re-activation.
+	 * Run the DB upgrade routine if the plugin was updated without re-activation.
 	 */
 	public function maybe_upgrade() {
-		if ( get_option( 'mmr_db_version' ) !== MMR_VERSION ) {
-			MMR_DB::install();
-		}
+		MMR_DB::maybe_upgrade();
 	}
 
 	/**
@@ -87,25 +85,19 @@ class MMR_Plugin {
 		);
 
 		$pages = array(
-			'calendar'          => __( 'Calendar', 'mm-register' ),
-			'settlement'        => __( 'Settlement', 'mm-register' ),
-			'receivables'       => __( 'Receivables', 'mm-register' ),
-			'students-classes'  => __( 'Students & Classes', 'mm-register' ),
-			'budget'            => __( 'Budget', 'mm-register' ),
-			'expenses'          => __( 'Expenses', 'mm-register' ),
-			'projections'       => __( 'Projections', 'mm-register' ),
-			'tools'             => __( 'Tools', 'mm-register' ),
+			'calendar'   => __( 'Calendar', 'mm-register' ),
+			'settlement' => __( 'Settlement', 'mm-register' ),
+			'students'   => __( 'Students', 'mm-register' ),
+			'classes'    => __( 'Classes', 'mm-register' ),
+			'tools'      => __( 'Tools', 'mm-register' ),
 		);
 
 		$callbacks = array(
-			'calendar'         => 'render_calendar',
-			'settlement'       => 'render_settlement',
-			'receivables'      => 'render_receivables',
-			'students-classes' => 'render_students_classes',
-			'budget'           => 'render_budget',
-			'expenses'         => 'render_expenses',
-			'projections'      => 'render_projections',
-			'tools'            => 'render_tools',
+			'calendar'   => 'render_calendar',
+			'settlement' => 'render_settlement',
+			'students'   => 'render_students',
+			'classes'    => 'render_classes',
+			'tools'      => 'render_tools',
 		);
 
 		foreach ( $pages as $slug => $title ) {
