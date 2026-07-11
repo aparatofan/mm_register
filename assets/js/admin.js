@@ -97,27 +97,21 @@
 				} else {
 					clearMembers( modal );
 				}
-				var kind = opener.getAttribute( 'data-kind' );
-				if ( kind ) {
-					var kindField = form.querySelector( '[data-field="kind"]' );
-					if ( kindField ) { kindField.value = kind; }
-				}
 				openModal( modal );
 				return;
 			}
 			if ( e.target.closest( '.mmr-close-modal' ) ) {
 				e.preventDefault();
-				var box = e.target.closest( '.mmr-modal' );
-				closeModal( box );
+				closeModal( e.target.closest( '.mmr-modal-overlay' ) );
 			}
 			// Click on backdrop closes.
-			if ( e.target.classList && e.target.classList.contains( 'mmr-modal' ) ) {
+			if ( e.target.classList && e.target.classList.contains( 'mmr-modal-overlay' ) ) {
 				closeModal( e.target );
 			}
 		} );
 		document.addEventListener( 'keydown', function ( e ) {
 			if ( e.key === 'Escape' ) {
-				document.querySelectorAll( '.mmr-modal:not([hidden])' ).forEach( closeModal );
+				document.querySelectorAll( '.mmr-modal-overlay:not([hidden])' ).forEach( closeModal );
 				closePicker();
 				closePopover();
 			}
@@ -158,7 +152,7 @@
 		document.addEventListener( 'click', function ( e ) {
 			if ( e.target.id === 'mmr-add-member' ) {
 				e.preventDefault();
-				addMemberRow( e.target.closest( '.mmr-modal' ), null );
+				addMemberRow( e.target.closest( '.mmr-modal-overlay' ), null );
 			}
 			if ( e.target.classList && e.target.classList.contains( 'mmr-remove-member' ) ) {
 				e.preventDefault();

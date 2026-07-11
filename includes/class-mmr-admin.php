@@ -75,8 +75,13 @@ class MMR_Admin {
 	}
 
 	/** @return void */
-	public function render_students_classes() {
-		$this->render( 'students-classes.php' );
+	public function render_students() {
+		$this->render( 'students.php' );
+	}
+
+	/** @return void */
+	public function render_classes() {
+		$this->render( 'classes.php' );
 	}
 
 	/** @return void */
@@ -102,12 +107,14 @@ class MMR_Admin {
 		check_admin_referer( 'mmr_form' );
 
 		$map = array(
-			'save_student'   => 'post_save_student',
-			'save_class'     => 'post_save_class',
-			'quick_add_1on1' => 'post_quick_add_1on1',
-			'import_data'    => 'post_import_data',
-			'export_data'    => 'post_export_data',
-			'wipe_data'      => 'post_wipe_data',
+			'save_student'          => 'post_save_student',
+			'toggle_student_status' => 'post_toggle_student_status',
+			'save_class'            => 'post_save_class',
+			'toggle_class_status'   => 'post_toggle_class_status',
+			'quick_add_1on1'        => 'post_quick_add_1on1',
+			'import_data'           => 'post_import_data',
+			'export_data'           => 'post_export_data',
+			'wipe_data'             => 'post_wipe_data',
 		);
 		if ( isset( $map[ $action ] ) ) {
 			$this->{$map[ $action ]}();
@@ -174,6 +181,23 @@ class MMR_Admin {
 
 	/* --- Students & classes ------------------------------------------- */
 
+	/**
+	 * Collect the filter_* fields a row-action form echoes back, so the
+	 * redirect can restore the list view (search / status / type filter).
+	 *
+	 * @return array
+	 */
+	protected function filter_args() {
+		$args = array();
+		foreach ( array( 's', 'status', 'client_type' ) as $key ) {
+			$value = $this->text( 'filter_' . $key );
+			if ( '' !== $value ) {
+				$args[ $key ] = $value;
+			}
+		}
+		return $args;
+	}
+
 	/** Save a student. */
 	protected function post_save_student() {
 		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
@@ -185,10 +209,20 @@ class MMR_Admin {
 			'status'          => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
 		);
 		if ( '' === $data['name'] ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'students' ), true );
+			$this->redirect( 'students', 'Name is required.', array(), true );
 		}
 		MMR_Data::save_student( $data, $id );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'students' ) );
+		$this->redirect( 'students', 'saved' );
+	}
+
+	/** Archive / restore a student. */
+	protected function post_toggle_student_status() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$status = ( 'archived' === $this->text( 'status' ) ) ? 'archived' : 'active';
+		if ( $id ) {
+			MMR_Data::set_student_status( $id, $status );
+		}
+		$this->redirect( 'students', 'saved', $this->filter_args() );
 	}
 
 	/** Save a class + its members. */
@@ -205,7 +239,7 @@ class MMR_Admin {
 			'sort_name'     => $this->text( 'sort_name' ),
 		);
 		if ( '' === $data['name'] ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'classes' ), true );
+			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
 		$class_id = MMR_Data::save_class( $data, $id );
 
@@ -225,7 +259,17 @@ class MMR_Admin {
 			);
 		}
 		MMR_Data::set_members( $class_id, $members );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'classes' ) );
+		$this->redirect( 'classes', 'saved' );
+	}
+
+	/** Archive / restore a class. */
+	protected function post_toggle_class_status() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$status = ( 'archived' === $this->text( 'status' ) ) ? 'archived' : 'active';
+		if ( $id ) {
+			MMR_Data::set_class_status( $id, $status );
+		}
+		$this->redirect( 'classes', 'saved', $this->filter_args() );
 	}
 
 	/** Quick-add a 1-on-1 student + same-named class + membership. */
@@ -235,7 +279,7 @@ class MMR_Admin {
 		$tbt = $this->money( 'tbt_monthly_fee' );
 		$email = sanitize_email( $this->text( 'email' ) );
 		if ( '' === $name ) {
-			$this->redirect( 'students-classes', 'Name is required.', array( 'tab' => 'classes' ), true );
+			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
 		$student_id = MMR_Data::save_student( array(
 			'name'            => $name,
@@ -255,7 +299,7 @@ class MMR_Admin {
 			'sort_name'     => '',
 		) );
 		MMR_Data::set_members( $class_id, array( array( 'student_id' => $student_id, 'share' => null ) ) );
-		$this->redirect( 'students-classes', 'saved', array( 'tab' => 'classes' ) );
+		$this->redirect( 'classes', 'saved' );
 	}
 
 	/* --- Tools --------------------------------------------------------- */

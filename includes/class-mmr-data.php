@@ -21,7 +21,7 @@ class MMR_Data {
 	/**
 	 * Fetch students.
 	 *
-	 * @param array $args status => active|archived|all, search => string.
+	 * @param array $args status => active|archived|all, search => string (name/email).
 	 * @return array
 	 */
 	public static function students( $args = array() ) {
@@ -36,8 +36,10 @@ class MMR_Data {
 			$params[] = $status;
 		}
 		if ( ! empty( $args['search'] ) ) {
-			$where .= ' AND name LIKE %s';
-			$params[] = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			$like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			$where .= ' AND (name LIKE %s OR email LIKE %s)';
+			$params[] = $like;
+			$params[] = $like;
 		}
 
 		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY name ASC";
@@ -91,6 +93,24 @@ class MMR_Data {
 		return (int) $wpdb->insert_id;
 	}
 
+	/**
+	 * Archive / restore a student.
+	 *
+	 * @param int    $id     Student ID.
+	 * @param string $status active|archived.
+	 */
+	public static function set_student_status( $id, $status ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'students' );
+		$wpdb->update(
+			$table,
+			array( 'status' => $status, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
 	/* ---------------------------------------------------------------------
 	 * Classes & members
 	 * ------------------------------------------------------------------ */
@@ -98,7 +118,7 @@ class MMR_Data {
 	/**
 	 * Fetch classes.
 	 *
-	 * @param array $args status, search.
+	 * @param array $args status, search, client_type.
 	 * @return array
 	 */
 	public static function classes( $args = array() ) {
@@ -115,6 +135,10 @@ class MMR_Data {
 		if ( ! empty( $args['search'] ) ) {
 			$where .= ' AND name LIKE %s';
 			$params[] = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+		}
+		if ( ! empty( $args['client_type'] ) ) {
+			$where .= ' AND client_type = %s';
+			$params[] = $args['client_type'];
 		}
 
 		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY COALESCE(NULLIF(sort_name,''), name) ASC";
@@ -137,14 +161,19 @@ class MMR_Data {
 	}
 
 	/**
-	 * Distinct existing client_type values (for datalist suggestions).
+	 * Distinct existing values of a classes column (for datalist suggestions).
 	 *
+	 * @param string $field client_type|venue|settle_method.
 	 * @return string[]
 	 */
-	public static function client_types() {
+	public static function class_field_values( $field ) {
 		global $wpdb;
+		if ( ! in_array( $field, array( 'client_type', 'venue', 'settle_method' ), true ) ) {
+			return array();
+		}
 		$table = MMR_DB::table( 'classes' );
-		$rows = $wpdb->get_col( "SELECT DISTINCT client_type FROM {$table} WHERE client_type <> '' ORDER BY client_type ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
+		// Column name comes from the whitelist above; safe to interpolate.
+		$rows = $wpdb->get_col( "SELECT DISTINCT {$field} FROM {$table} WHERE {$field} IS NOT NULL AND {$field} <> '' ORDER BY {$field} ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
 		return array_filter( (array) $rows );
 	}
 
@@ -209,6 +238,18 @@ class MMR_Data {
 		}
 		$wpdb->insert( $table, $row, $formats );
 		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Archive / restore a class.
+	 *
+	 * @param int    $id     Class ID.
+	 * @param string $status active|archived.
+	 */
+	public static function set_class_status( $id, $status ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'classes' );
+		$wpdb->update( $table, array( 'status' => $status ), array( 'id' => $id ), array( '%s' ), array( '%d' ) );
 	}
 
 	/**

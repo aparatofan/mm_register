@@ -213,7 +213,7 @@
 .mmr-quickadd-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 /* Modals -------------------------------------------------------------- */
-.mmr-modal {
+.mmr-modal-overlay {
 	position: fixed;
 	inset: 0;
 	background: rgba(0,0,0,.4);
@@ -224,26 +224,63 @@
 	padding: 40px 16px;
 	overflow-y: auto;
 }
-.mmr-modal[hidden] { display: none; }
-.mmr-modal-box {
+.mmr-modal-overlay[hidden] { display: none; }
+.mmr-modal {
+	width: min(760px, calc(100vw - 48px));
+	max-width: 100%;
 	background: #fff;
 	border-radius: 8px;
-	padding: 20px 24px;
-	width: 460px;
-	max-width: 100%;
 	box-shadow: 0 12px 40px rgba(0,0,0,.25);
 }
-.mmr-modal-wide { width: 640px; }
+.mmr-modal__body {
+	padding: 24px;
+	max-height: calc(100vh - 180px);
+	overflow-y: auto;
+	overflow-x: hidden;
+}
 .mmr-modal-title { margin-top: 0; }
 .mmr-modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
-.mmr-modal-actions .mmr-delete-btn { margin-left: auto; }
-.mmr-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
-.mmr-form-grid p { margin: 6px 0; }
 .mmr-delete-btn { color: var(--mmr-neg); }
 
-.mmr-members-table { width: 100%; border-collapse: collapse; }
-.mmr-members-table th, .mmr-members-table td { padding: 4px; text-align: left; font-size: 12px; }
-.mmr-member-select { min-width: 220px; }
+/* Modal form grid: every field wrapper gets min-width:0 so intrinsic input
+   widths can never push a column past the modal edge. */
+.mmr-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.mmr-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.mmr-field--full { grid-column: 1 / -1; }
+.mmr-field label { font-size: 12px; font-weight: 600; }
+
+.mmr-form-grid input,
+.mmr-form-grid select,
+.mmr-form-grid textarea {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0;
+}
+
+/* Members repeater */
+.mmr-member-row { display: grid; grid-template-columns: minmax(0, 1fr) 140px 32px; gap: 12px; align-items: center; margin-bottom: 8px; }
+.mmr-member-row > select,
+.mmr-member-row > input {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0;
+}
+.mmr-member-row--head { font-size: 12px; font-weight: 600; color: var(--mmr-muted); margin-bottom: 4px; }
+
+@media (max-width: 640px) {
+	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }
+	.mmr-member-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Row actions (Edit + Archive/Restore) */
+.mmr-row-actions { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+
+/* Small fixed-width controls are the only allowed px widths. */
+.mmr-input-fee { width: 90px; }
 
 /* Tools --------------------------------------------------------------- */
 .mmr-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
@@ -257,8 +294,7 @@
 /* Mobile -------------------------------------------------------------- */
 @media (max-width: 782px) {
 	.mmr-day-tabs { display: flex; }
-	.mmr-grid { grid-template-columns: 1fr; }
+	.mmr-grid { grid-template-columns: minmax(0, 1fr); }
 	.mmr-col { display: none; }
 	.mmr-col.is-active { display: block; }
-	.mmr-form-grid { grid-template-columns: 1fr; }
 }
