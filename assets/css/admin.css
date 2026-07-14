@@ -1,6 +1,15 @@
 /**
  * MM Register — admin styles.
- * Dense, spreadsheet-like. System font stack. TBT blue #0859C6 accent only.
+ * System font stack throughout.
+ *
+ * Two token layers:
+ *   1. :root legacy tokens (--mmr-accent … ) — still power every non-calendar
+ *      screen (students, classes, companies, settlement, tools, modals).
+ *   2. .mmr-calendar design tokens (--mmr-brand … ) — the redesigned weekly
+ *      calendar. The whole calendar type scale derives from --mmr-fs; every
+ *      calendar colour/size/radius comes from a custom property so --mmr-fs and
+ *      --mmr-brand stay retunable. All calendar selectors are scoped under
+ *      .mmr-calendar so nothing leaks into the rest of wp-admin.
  */
 
 :root {
@@ -12,6 +21,40 @@
 	--mmr-muted: #6b7280;
 	--mmr-ok: #1a7f37;
 	--mmr-neg: #b3261e;
+}
+
+/* Calendar design tokens — declared on the calendar root. Change --mmr-fs
+   alone to rescale the whole calendar coherently. */
+.mmr-calendar {
+	/* colour */
+	--mmr-brand:        #0856C9;
+	--mmr-brand-hover:  #0642A0;   /* darkened for :hover / :active */
+	--mmr-brand-tint:   #EEF4FE;   /* today column, row hover */
+	--mmr-brand-edge:   #C7DBFA;   /* today column border */
+
+	--mmr-ink:          #101828;   /* names, headings */
+	--mmr-ink-soft:     #475467;   /* amounts, dates */
+	--mmr-ink-faint:    #98A2B3;   /* empty-slot "+", helper text */
+	--mmr-line:         #E4E7EC;
+	--mmr-surface:      #FFFFFF;
+	--mmr-surface-alt:  #F9FAFB;   /* day header + Σ footer */
+
+	/* status — text / tint / edge, in that order */
+	--mmr-danger:  #B42318;  --mmr-danger-tint:  #FEF3F2;  --mmr-danger-edge:  #F97066;
+	--mmr-warn:    #B54708;  --mmr-warn-tint:    #FFFAEB;  --mmr-warn-edge:    #F79009;
+	--mmr-good:    #067647;  --mmr-good-tint:    #ECFDF3;  --mmr-good-edge:    #17B26A;
+
+	/* geometry */
+	--mmr-radius: 10px;
+	--mmr-radius-sm: 6px;
+	--mmr-shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
+	--mmr-gap: 12px;
+
+	/* type — change --mmr-fs only */
+	--mmr-fs: 15px;
+	--mmr-fs-sm:    calc(var(--mmr-fs) * 0.86);   /* ~13px — day letters, helper */
+	--mmr-fs-lg:    calc(var(--mmr-fs) * 1.07);   /* ~16px — Σ footer */
+	--mmr-fs-title: calc(var(--mmr-fs) * 1.87);   /* ~28px — "Calendar" */
 }
 
 /* Page wrapper: replaces core .wrap — full admin content width, no ceiling. */
@@ -46,7 +89,7 @@
 .mmr-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mmr-neg { color: var(--mmr-neg); }
 
-/* Toolbar ------------------------------------------------------------- */
+/* Toolbar (shared base — students / classes / companies / settlement) ---- */
 .mmr-toolbar {
 	display: flex;
 	justify-content: space-between;
@@ -73,76 +116,278 @@
 .mmr-total-chip strong { font-variant-numeric: tabular-nums; }
 .mmr-total-month strong { color: var(--mmr-accent); }
 
-/* Calendar grid --------------------------------------------------------
-   minmax(0, 1fr) is mandatory: plain 1fr lets long class names push
-   columns past the container and cause horizontal scroll. */
-.mmr-grid {
+/* =====================================================================
+   Calendar redesign — everything below is scoped under .mmr-calendar.
+   ===================================================================== */
+
+.mmr-calendar .mmr-page-title {
+	font-size: var(--mmr-fs-title);
+	font-weight: 600;
+	letter-spacing: -.01em;
+	color: var(--mmr-ink);
+}
+.mmr-calendar .mmr-week-range {
+	font-size: var(--mmr-fs-sm);
+	color: var(--mmr-ink-soft);
+}
+
+/* Quiet chrome: the calendar toolbar drops the boxed background. */
+.mmr-calendar .mmr-toolbar {
+	background: transparent;
+	border: 0;
+	padding: 0;
+	margin: 4px 0 var(--mmr-gap);
+	gap: var(--mmr-gap);
+}
+.mmr-calendar .mmr-nav { gap: 8px; }
+
+/* Toolbar buttons — scoped with #wpbody-content to beat core .button without
+   !important. White by default; Copy week is the single primary. */
+#wpbody-content .mmr-calendar .mmr-nav .button {
+	background: var(--mmr-surface);
+	border: 1px solid var(--mmr-line);
+	border-radius: var(--mmr-radius-sm);
+	color: var(--mmr-ink);
+	padding: 9px 14px;
+	height: auto;
+	line-height: 1.2;
+	font-size: var(--mmr-fs-sm);
+	box-shadow: none;
+	transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+#wpbody-content .mmr-calendar .mmr-nav .button:hover,
+#wpbody-content .mmr-calendar .mmr-nav .button:active {
+	background: var(--mmr-brand-tint);
+	border-color: var(--mmr-brand-edge);
+	color: var(--mmr-brand);
+}
+#wpbody-content .mmr-calendar .mmr-nav .button:focus-visible {
+	outline: 2px solid var(--mmr-brand);
+	outline-offset: 1px;
+	box-shadow: none;
+}
+#wpbody-content .mmr-calendar .mmr-nav #mmr-copy-week {
+	background: var(--mmr-brand);
+	border-color: var(--mmr-brand);
+	color: var(--mmr-surface);
+}
+#wpbody-content .mmr-calendar .mmr-nav #mmr-copy-week:hover,
+#wpbody-content .mmr-calendar .mmr-nav #mmr-copy-week:active {
+	background: var(--mmr-brand-hover);
+	border-color: var(--mmr-brand-hover);
+	color: var(--mmr-surface);
+}
+
+/* Date jumper — same border/radius treatment, brand focus ring. */
+#wpbody-content .mmr-calendar #mmr-jump {
+	border: 1px solid var(--mmr-line);
+	border-radius: var(--mmr-radius-sm);
+	color: var(--mmr-ink);
+	background: var(--mmr-surface);
+	padding: 8px 10px;
+	font-size: var(--mmr-fs-sm);
+	line-height: 1.2;
+	transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+#wpbody-content .mmr-calendar #mmr-jump:focus {
+	border-color: var(--mmr-brand);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--mmr-brand) 15%, transparent);
+	outline: none;
+}
+
+/* The pulse bar: Lessons · Week · Month. Loud numbers, quiet frame. */
+.mmr-calendar .mmr-totals { gap: var(--mmr-gap); align-items: stretch; }
+.mmr-calendar .mmr-pill {
+	display: inline-flex;
+	align-items: baseline;
+	gap: .5em;
+	padding: 8px 14px;
+	background: var(--mmr-surface-alt);
+	border: 1px solid var(--mmr-line);
+	border-left-width: 3px;
+	border-radius: var(--mmr-radius-sm);
+	font-size: var(--mmr-fs-sm);
+	color: var(--mmr-ink-soft);
+	line-height: 1.2;
+}
+.mmr-calendar .mmr-pill-label { font-weight: 500; }
+.mmr-calendar .mmr-pill-value {
+	font-size: var(--mmr-fs);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--mmr-ink);
+}
+
+/* Conditional colour lives ONLY on the week + lesson pills: a 3px left rule
+   plus a faint tint. The month pill is brand blue and inert; the per-day Σ
+   footers stay neutral. */
+.mmr-calendar .mmr-pill--danger {
+	background: var(--mmr-danger-tint);
+	border-left-color: var(--mmr-danger-edge);
+}
+.mmr-calendar .mmr-pill--danger .mmr-pill-value { color: var(--mmr-danger); }
+.mmr-calendar .mmr-pill--warn {
+	background: var(--mmr-warn-tint);
+	border-left-color: var(--mmr-warn-edge);
+}
+.mmr-calendar .mmr-pill--warn .mmr-pill-value { color: var(--mmr-warn); }
+.mmr-calendar .mmr-pill--good {
+	background: var(--mmr-good-tint);
+	border-left-color: var(--mmr-good-edge);
+}
+.mmr-calendar .mmr-pill--good .mmr-pill-value { color: var(--mmr-good); }
+.mmr-calendar .mmr-pill--month { border-left-color: var(--mmr-brand-edge); }
+.mmr-calendar .mmr-pill--month .mmr-pill-value { color: var(--mmr-brand); }
+
+/* Calendar grid ------------------------------------------------------------
+   minmax(0, 1fr) is mandatory: plain 1fr lets long class names push columns
+   past the container. On narrow viewports the grid keeps its columns (via
+   min-width) and the wrapper scrolls horizontally rather than squashing the
+   money column. */
+.mmr-calendar .mmr-grid-scroll {
+	overflow-x: auto;
+	margin-top: var(--mmr-gap);
+}
+.mmr-calendar .mmr-grid {
 	display: grid;
 	grid-template-columns: repeat(var(--mmr-cols, 5), minmax(0, 1fr));
-	gap: 12px;
+	gap: var(--mmr-gap);
 	width: 100%;
-	margin-top: 8px;
+	min-width: 940px;
+	margin: 0;
 }
-.mmr-col {
+
+/* Day column = card. */
+.mmr-calendar .mmr-col {
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
-	border: 1px solid var(--mmr-border);
-	border-radius: 6px;
+	background: var(--mmr-surface);
+	border: 1px solid var(--mmr-line);
+	border-radius: var(--mmr-radius);
+	box-shadow: var(--mmr-shadow);
 	overflow: hidden;
-	background: #fff;
 }
-.mmr-col.is-today { border-color: var(--mmr-accent); box-shadow: 0 0 0 1px var(--mmr-accent); }
-.mmr-col-head {
+/* Today: 2px edge border + a 3px brand bar across the top + brand header. */
+.mmr-calendar .mmr-col.is-today { border: 2px solid var(--mmr-brand-edge); }
+.mmr-calendar .mmr-col.is-today .mmr-col-head {
+	border-top: 3px solid var(--mmr-brand);
+	background: var(--mmr-brand-tint);
+}
+.mmr-calendar .mmr-col.is-today .mmr-col-dow,
+.mmr-calendar .mmr-col.is-today .mmr-col-date { color: var(--mmr-brand); }
+
+.mmr-calendar .mmr-col-head {
 	display: flex;
 	justify-content: space-between;
 	align-items: baseline;
-	padding: 6px 8px;
-	background: var(--mmr-bg-soft);
-	border-bottom: 1px solid var(--mmr-border);
+	padding: 10px 14px;
+	background: var(--mmr-surface-alt);
+	border-bottom: 1px solid var(--mmr-line);
 }
-.mmr-col.is-today .mmr-col-head { background: var(--mmr-accent-soft); }
-.mmr-col-dow { font-weight: 700; font-size: 12px; letter-spacing: .03em; }
-.mmr-col-date { color: var(--mmr-muted); font-size: 12px; }
+.mmr-calendar .mmr-col-dow {
+	font-size: var(--mmr-fs-sm);
+	font-weight: 600;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	color: var(--mmr-ink-soft);
+}
+.mmr-calendar .mmr-col-date {
+	font-size: var(--mmr-fs-sm);
+	font-variant-numeric: tabular-nums;
+	color: var(--mmr-ink-faint);
+}
 
-.mmr-slot {
+.mmr-calendar .mmr-slot {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
-	gap: 6px;
-	min-height: 30px;
-	padding: 3px 8px;
-	border-bottom: 1px solid #eef0f3;
+	gap: 8px;
+	min-height: 44px;
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--mmr-line);
+	background: var(--mmr-surface);
 	cursor: pointer;
-	font-size: 13px;
+	font-size: var(--mmr-fs);
+	transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.mmr-slot:hover { background: var(--mmr-accent-soft); }
-.mmr-slot.is-empty { color: #c3c9d2; }
-.mmr-slot.is-empty .mmr-slot-plus { font-size: 14px; }
-.mmr-slot.is-filled { background: #fff; }
-.mmr-slot-name { min-width: 0; flex: 1 1 auto; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mmr-slot-note { color: var(--mmr-accent); margin-left: 2px; }
-.mmr-slot-fee { color: var(--mmr-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mmr-col-total {
-	padding: 6px 8px;
-	background: var(--mmr-bg-soft);
-	border-top: 1px solid var(--mmr-border);
-	font-size: 12px;
+.mmr-calendar .mmr-slot:hover { background: var(--mmr-brand-tint); }
+.mmr-calendar .mmr-slot:focus-visible {
+	outline: 2px solid var(--mmr-brand);
+	outline-offset: -2px;
+}
+.mmr-calendar .mmr-slot-name {
+	min-width: 0;
+	flex: 1 1 auto;
+	font-weight: 500;
+	color: var(--mmr-ink);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mmr-calendar .mmr-slot-note { color: var(--mmr-brand); margin-left: 2px; }
+.mmr-calendar .mmr-slot-fee {
+	font-weight: 400;
+	color: var(--mmr-ink-soft);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 	text-align: right;
 }
-.mmr-col-total strong { font-variant-numeric: tabular-nums; }
 
-.mmr-day-tabs { display: none; gap: 4px; margin: 8px 0; flex-wrap: wrap; }
-.mmr-day-tab {
-	padding: 6px 10px;
-	border: 1px solid var(--mmr-border);
-	background: #fff;
-	border-radius: 4px;
-	cursor: pointer;
-	font-size: 12px;
+/* Empty slot: a ghost row that reads as a drop target on hover. */
+.mmr-calendar .mmr-slot.is-empty { justify-content: center; color: var(--mmr-ink-faint); }
+.mmr-calendar .mmr-slot.is-empty .mmr-slot-plus {
+	font-size: var(--mmr-fs-lg);
+	color: var(--mmr-ink-faint);
+	transition: color 120ms ease;
 }
-.mmr-day-tab.is-active { background: var(--mmr-accent); color: #fff; border-color: var(--mmr-accent); }
-.mmr-day-tab.is-today { border-color: var(--mmr-accent); }
+.mmr-calendar .mmr-slot.is-empty:hover {
+	background: var(--mmr-brand-tint);
+	outline: 1px dashed var(--mmr-brand-edge);
+	outline-offset: -5px;
+}
+.mmr-calendar .mmr-slot.is-empty:hover .mmr-slot-plus { color: var(--mmr-brand); }
 
-.mmr-hint { color: var(--mmr-muted); font-size: 12px; margin-top: 10px; }
+/* Σ footer — neutral, pinned to the bottom so cards align. */
+.mmr-calendar .mmr-col-total {
+	margin-top: auto;
+	padding: 10px 14px;
+	background: var(--mmr-surface-alt);
+	border-top: 1px solid var(--mmr-line);
+	font-size: var(--mmr-fs-lg);
+	font-weight: 600;
+	color: var(--mmr-ink);
+	text-align: right;
+}
+.mmr-calendar .mmr-col-total strong { font-variant-numeric: tabular-nums; }
+
+.mmr-calendar .mmr-day-tabs { display: none; gap: 6px; margin: var(--mmr-gap) 0; flex-wrap: wrap; }
+.mmr-calendar .mmr-day-tab {
+	padding: 8px 12px;
+	border: 1px solid var(--mmr-line);
+	background: var(--mmr-surface);
+	border-radius: var(--mmr-radius-sm);
+	color: var(--mmr-ink);
+	cursor: pointer;
+	font-size: var(--mmr-fs-sm);
+}
+.mmr-calendar .mmr-day-tab.is-active { background: var(--mmr-brand); color: var(--mmr-surface); border-color: var(--mmr-brand); }
+.mmr-calendar .mmr-day-tab.is-today { border-color: var(--mmr-brand-edge); }
+
+.mmr-calendar .mmr-hint {
+	color: var(--mmr-ink-soft);
+	font-size: var(--mmr-fs-sm);
+	margin-top: var(--mmr-gap);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mmr-calendar .mmr-slot,
+	.mmr-calendar .mmr-slot.is-empty .mmr-slot-plus,
+	#wpbody-content .mmr-calendar .mmr-nav .button,
+	#wpbody-content .mmr-calendar #mmr-jump {
+		transition: none;
+	}
+}
 
 /* Inline lesson picker ------------------------------------------------ */
 .mmr-picker {
@@ -318,8 +563,8 @@
 
 /* Mobile -------------------------------------------------------------- */
 @media (max-width: 782px) {
-	.mmr-day-tabs { display: flex; }
-	.mmr-grid { grid-template-columns: minmax(0, 1fr); }
-	.mmr-col { display: none; }
-	.mmr-col.is-active { display: block; }
+	.mmr-calendar .mmr-day-tabs { display: flex; }
+	.mmr-calendar .mmr-grid { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+	.mmr-calendar .mmr-col { display: none; }
+	.mmr-calendar .mmr-col.is-active { display: block; }
 }

@@ -135,3 +135,82 @@ function mmr_page_url( $page, $args = array() ) {
 	$args = array_merge( array( 'page' => 'mmr-' . $page ), $args );
 	return add_query_arg( $args, admin_url( 'admin.php' ) );
 }
+
+/**
+ * Week money thresholds for the calendar status pill, filterable so they can
+ * be tuned without touching code. Below `warn` is danger; `warn`..`good`
+ * inclusive is warn; above `good` is good.
+ *
+ * @return array{warn:float,good:float}
+ */
+function mmr_week_money_thresholds() {
+	$thresholds = apply_filters( 'mm_register_week_money_thresholds', array( 'warn' => 2000, 'good' => 3000 ) );
+	return array(
+		'warn' => (float) $thresholds['warn'],
+		'good' => (float) $thresholds['good'],
+	);
+}
+
+/**
+ * Week lesson-count thresholds, filterable. Same band semantics as money.
+ *
+ * @return array{warn:int,good:int}
+ */
+function mmr_week_lesson_thresholds() {
+	$thresholds = apply_filters( 'mm_register_week_lesson_thresholds', array( 'warn' => 20, 'good' => 25 ) );
+	return array(
+		'warn' => (int) $thresholds['warn'],
+		'good' => (int) $thresholds['good'],
+	);
+}
+
+/**
+ * Status band for a week money total.
+ *
+ * @param float $total Week total in zł.
+ * @return string 'danger' | 'warn' | 'good'.
+ */
+function mmr_status_for_amount( $total ) {
+	$t = mmr_week_money_thresholds();
+	if ( $total < $t['warn'] ) {
+		return 'danger';
+	}
+	if ( $total <= $t['good'] ) {
+		return 'warn';
+	}
+	return 'good';
+}
+
+/**
+ * Status band for a week lesson count.
+ *
+ * @param int $n Number of booked lessons in the week.
+ * @return string 'danger' | 'warn' | 'good'.
+ */
+function mmr_status_for_count( $n ) {
+	$t = mmr_week_lesson_thresholds();
+	if ( $n < $t['warn'] ) {
+		return 'danger';
+	}
+	if ( $n <= $t['good'] ) {
+		return 'warn';
+	}
+	return 'good';
+}
+
+/**
+ * Human words for a status band, so colour is never the only signal.
+ *
+ * @param string $status 'danger' | 'warn' | 'good'.
+ * @return string
+ */
+function mmr_status_words( $status ) {
+	switch ( $status ) {
+		case 'danger':
+			return __( 'below target', 'mm-register' );
+		case 'good':
+			return __( 'above target', 'mm-register' );
+		default:
+			return __( 'on target', 'mm-register' );
+	}
+}
