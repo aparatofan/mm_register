@@ -89,6 +89,7 @@ class MMR_Plugin {
 			'settlement' => __( 'Settlement', 'mm-register' ),
 			'students'   => __( 'Students', 'mm-register' ),
 			'classes'    => __( 'Classes', 'mm-register' ),
+			'companies'  => __( 'Companies', 'mm-register' ),
 			'tools'      => __( 'Tools', 'mm-register' ),
 		);
 
@@ -97,6 +98,7 @@ class MMR_Plugin {
 			'settlement' => 'render_settlement',
 			'students'   => 'render_students',
 			'classes'    => 'render_classes',
+			'companies'  => 'render_companies',
 			'tools'      => 'render_tools',
 		);
 

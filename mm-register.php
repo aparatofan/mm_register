@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MM Register
  * Plugin URI:        https://mariuszmirecki.pl/
- * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students & classes database and a computed monthly settlement report. No front-end output.
+ * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students / classes / companies database and a computed monthly settlement report. No front-end output.
  * Version:           2.0.0
  * Requires at least: 6.0
  * Requires PHP:      8.1
@@ -18,10 +18,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MMR_VERSION', '2.0.0' );
+define( 'MMR_VERSION', '2.1.0' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
-define( 'MMR_DB_VERSION', '2.0' );
+define( 'MMR_DB_VERSION', '2.1' );
 define( 'MMR_FILE', __FILE__ );
 define( 'MMR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MMR_URL', plugin_dir_url( __FILE__ ) );

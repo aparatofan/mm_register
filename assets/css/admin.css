@@ -298,6 +298,12 @@
 /* Row actions (Edit + Archive/Restore) */
 .mmr-row-actions { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
 
+/* Ellipsised cell content (e.g. company address first line). */
+.mmr-ellipsis { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Small helper link under a modal field (e.g. "Manage companies →"). */
+.mmr-field-link { font-size: 11px; }
+
 /* Small fixed-width controls are the only allowed px widths. */
 .mmr-input-fee { width: 90px; }
 

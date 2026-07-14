@@ -28,6 +28,7 @@ $summary_json = array(
 	'period'  => $period,
 	'headers' => array(
 		__( 'Student', 'mm-register' ),
+		__( 'Company', 'mm-register' ),
 		__( 'Lessons', 'mm-register' ),
 		__( 'Lesson total', 'mm-register' ),
 		__( 'TBT surcharge', 'mm-register' ),
@@ -39,6 +40,7 @@ $summary_json = array(
 foreach ( $report['students'] as $s ) {
 	$summary_json['rows'][] = array(
 		'student'      => $s['student_name'],
+		'company'      => $s['company'],
 		'lessons'      => $s['lessons'],
 		'lesson_total' => $s['lesson_total'],
 		'tbt'          => $s['tbt'],
@@ -79,6 +81,7 @@ foreach ( $report['students'] as $s ) {
 				<tr>
 					<th><?php esc_html_e( 'Class', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Client type', 'mm-register' ); ?></th>
+					<th><?php esc_html_e( 'Company', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Settle method', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php esc_html_e( 'Lessons', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Rate (snapshot)', 'mm-register' ); ?></th>
@@ -96,6 +99,7 @@ foreach ( $report['students'] as $s ) {
 					<tr class="mmr-settle-row">
 						<td><strong><?php echo esc_html( $row['class_name'] ); ?></strong></td>
 						<td><?php echo esc_html( $row['client_type'] ); ?></td>
+						<td><?php echo esc_html( $row['company'] ); ?></td>
 						<td><?php echo esc_html( $row['settle_method'] ); ?></td>
 						<td class="mmr-num"><?php echo (int) $row['lesson_count']; ?></td>
 						<td class="mmr-muted"><?php echo esc_html( implode( ', ', $fee_parts ) ); ?></td>
@@ -109,7 +113,7 @@ foreach ( $report['students'] as $s ) {
 					</tr>
 					<?php if ( $row['members'] ) : ?>
 						<tr class="mmr-split-row" hidden>
-							<td colspan="7">
+							<td colspan="8">
 								<table class="mmr-subtable">
 									<thead>
 										<tr>
@@ -139,7 +143,7 @@ foreach ( $report['students'] as $s ) {
 			</tbody>
 			<tfoot>
 				<tr>
-					<th colspan="5" class="mmr-foot-label"><?php esc_html_e( 'Month total', 'mm-register' ); ?></th>
+					<th colspan="6" class="mmr-foot-label"><?php esc_html_e( 'Month total', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php echo mmr_money_esc( $report['month_total'] ); ?></th>
 					<th></th>
 				</tr>
@@ -162,6 +166,7 @@ foreach ( $report['students'] as $s ) {
 			<thead>
 				<tr>
 					<th><?php esc_html_e( 'Student', 'mm-register' ); ?></th>
+					<th><?php esc_html_e( 'Company', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php esc_html_e( 'Lessons', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php esc_html_e( 'Lesson total', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php esc_html_e( 'TBT surcharge', 'mm-register' ); ?></th>
@@ -172,6 +177,7 @@ foreach ( $report['students'] as $s ) {
 				<?php foreach ( $report['students'] as $s ) : ?>
 					<tr>
 						<td><strong><?php echo esc_html( $s['student_name'] ); ?></strong></td>
+						<td><?php echo esc_html( $s['company'] ); ?></td>
 						<td class="mmr-num"><?php echo (int) $s['lessons']; ?></td>
 						<td class="mmr-num"><?php echo mmr_money_esc( $s['lesson_total'] ); ?></td>
 						<td class="mmr-num"><?php echo $s['tbt'] > 0 ? mmr_money_esc( $s['tbt'] ) : '—'; ?></td>
@@ -181,7 +187,7 @@ foreach ( $report['students'] as $s ) {
 			</tbody>
 			<tfoot>
 				<tr>
-					<th colspan="4" class="mmr-foot-label"><?php esc_html_e( 'To bill total', 'mm-register' ); ?></th>
+					<th colspan="5" class="mmr-foot-label"><?php esc_html_e( 'To bill total', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php echo mmr_money_esc( $report['to_bill_total'] ); ?></th>
 				</tr>
 			</tfoot>

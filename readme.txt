@@ -3,12 +3,13 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.0.0
+Stable tag: 2.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Private back-office register for NET ENGLISH: weekly lesson calendar,
-students & classes database and a computed monthly settlement report.
+students / classes / companies database and a computed monthly settlement
+report.
 
 == Description ==
 
@@ -34,6 +35,17 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.1.0 =
+* Students: added phone, second e-mail and level (CEFR) fields; the list now
+  shows Name / Level / Phone / Email / Status.
+* New Companies page and table (invoice/billing details) with full CRUD,
+  archive-not-delete and duplicate-name protection.
+* Classes: replaced the Sort name field with a searchable Company link and
+  removed the Venue field. The upgrade backs up the classes table to
+  wp-content/uploads/mm-register-backups/ before dropping those columns.
+* Settlement: added a Company column to the per-class and per-student tables
+  and the CSV export.
 
 = 2.0.0 =
 * Trim: removed Receivables, Budget, Expenses and Projections (pages,

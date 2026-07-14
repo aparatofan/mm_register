@@ -40,6 +40,7 @@ class MMR_DB {
 	 */
 	public static function activate() {
 		self::upgrade_legacy();
+		self::upgrade_v21();
 		self::install();
 	}
 
@@ -52,6 +53,7 @@ class MMR_DB {
 			return;
 		}
 		self::upgrade_legacy();
+		self::upgrade_v21();
 		self::install();
 	}
 
@@ -96,12 +98,54 @@ class MMR_DB {
 	}
 
 	/**
+	 * v2 → v2.1 upgrade: the classes table loses `venue` and `sort_name`.
+	 * dbDelta never drops columns, so this backs up mmr_classes first (best
+	 * effort) and then drops whichever of the two columns still exist. New
+	 * columns (student phone/email_2/level, class company_id) and the new
+	 * companies table are added by install()/dbDelta, not here.
+	 *
+	 * Idempotent: if neither column is present, it does nothing.
+	 */
+	protected static function upgrade_v21() {
+		global $wpdb;
+
+		$classes = self::table( 'classes' );
+		$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $classes ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		if ( $found !== $classes ) {
+			return; // Fresh install — install() will create the current schema.
+		}
+
+		$columns = $wpdb->get_col( "SHOW COLUMNS FROM {$classes}" ); // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+		$to_drop = array_values( array_intersect( array( 'venue', 'sort_name' ), (array) $columns ) );
+		if ( empty( $to_drop ) ) {
+			return;
+		}
+
+		// 1. Backup mmr_classes first.
+		$dump = array(
+			'reason'      => 'pre-v2.1 upgrade — the classes columns venue and sort_name were dropped',
+			'exported_at' => current_time( 'mysql' ),
+			'dropped'     => $to_drop,
+			'tables'      => array(
+				'classes' => $wpdb->get_results( "SELECT * FROM {$classes}", ARRAY_A ), // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+			),
+		);
+		self::write_backup( $dump, 'pre-v2.1' );
+
+		// 2. Then drop. Column names come from the fixed whitelist above.
+		foreach ( $to_drop as $column ) {
+			$wpdb->query( "ALTER TABLE {$classes} DROP COLUMN {$column}" ); // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.DirectDatabaseQuery
+		}
+	}
+
+	/**
 	 * Write the pre-drop dump into wp-content/uploads/mm-register-backups/.
 	 * Best effort: logs and returns on any failure instead of aborting.
 	 *
-	 * @param array $dump Backup payload.
+	 * @param array  $dump   Backup payload.
+	 * @param string $prefix Filename prefix, e.g. 'pre-v2' or 'pre-v2.1'.
 	 */
-	protected static function write_backup( $dump ) {
+	protected static function write_backup( $dump, $prefix = 'pre-v2' ) {
 		$uploads = wp_upload_dir();
 		if ( ! empty( $uploads['error'] ) ) {
 			error_log( 'MM Register: pre-v2 backup skipped — ' . $uploads['error'] ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
@@ -116,10 +160,10 @@ class MMR_DB {
 		if ( ! file_exists( $dir . '/index.php' ) ) {
 			@file_put_contents( $dir . '/index.php', "<?php // Silence is golden.\n" ); // phpcs:ignore
 		}
-		$file = $dir . '/pre-v2-' . gmdate( 'Ymd-His' ) . '.json';
+		$file = $dir . '/' . $prefix . '-' . gmdate( 'Ymd-His' ) . '.json';
 		$json = wp_json_encode( $dump, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE );
 		if ( false === @file_put_contents( $file, $json ) ) { // phpcs:ignore
-			error_log( 'MM Register: pre-v2 backup skipped — could not write ' . $file ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+			error_log( 'MM Register: ' . $prefix . ' backup skipped — could not write ' . $file ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
 		}
 	}
 
@@ -137,6 +181,7 @@ class MMR_DB {
 		$classes = self::table( 'classes' );
 		$members = self::table( 'class_members' );
 		$lessons = self::table( 'lessons' );
+		$companies = self::table( 'companies' );
 
 		$sql = array();
 
@@ -144,6 +189,9 @@ class MMR_DB {
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			name VARCHAR(190) NOT NULL,
 			email VARCHAR(190) NULL DEFAULT NULL,
+			email_2 VARCHAR(190) NULL DEFAULT NULL,
+			phone VARCHAR(40) NULL DEFAULT NULL,
+			level VARCHAR(20) NULL DEFAULT NULL,
 			tbt_monthly_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 			notes TEXT NULL,
 			status ENUM('active','archived') NOT NULL DEFAULT 'active',
@@ -159,15 +207,28 @@ class MMR_DB {
 			name VARCHAR(190) NOT NULL,
 			fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 			client_type VARCHAR(60) NULL DEFAULT NULL,
-			venue VARCHAR(60) NULL DEFAULT NULL,
 			settle_method VARCHAR(60) NULL DEFAULT NULL,
+			company_id BIGINT UNSIGNED NULL DEFAULT NULL,
 			notes TEXT NULL,
 			status ENUM('active','archived') NOT NULL DEFAULT 'active',
-			sort_name VARCHAR(190) NULL DEFAULT NULL,
 			PRIMARY KEY  (id),
 			KEY status (status),
 			KEY name (name),
-			KEY sort_name (sort_name)
+			KEY company_id (company_id)
+		) {$charset_collate};";
+
+		$sql[] = "CREATE TABLE {$companies} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			name VARCHAR(190) NOT NULL,
+			address TEXT NULL,
+			nip VARCHAR(20) NULL DEFAULT NULL,
+			notes TEXT NULL,
+			status ENUM('active','archived') NOT NULL DEFAULT 'active',
+			created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
+			updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			KEY status (status),
+			KEY name (name)
 		) {$charset_collate};";
 
 		$sql[] = "CREATE TABLE {$members} (
@@ -213,6 +274,7 @@ class MMR_DB {
 			'classes',
 			'class_members',
 			'lessons',
+			'companies',
 		);
 	}
 
@@ -251,7 +313,7 @@ class MMR_DB {
 	 */
 	public static function is_empty() {
 		global $wpdb;
-		foreach ( array( 'students', 'classes', 'class_members', 'lessons' ) as $key ) {
+		foreach ( array( 'students', 'classes', 'class_members', 'lessons', 'companies' ) as $key ) {
 			$table = self::table( $key );
 			$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL
 			if ( $count > 0 ) {

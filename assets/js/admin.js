@@ -163,6 +163,42 @@
 	}
 
 	/* ---------------------------------------------------------------
+	 * Class modal — company field: keep hidden company_id in step with the
+	 * typed name. Server-side resolution stays authoritative.
+	 * ------------------------------------------------------------- */
+
+	function initCompanyField() {
+		var input = document.getElementById( 'mmr-class-company' );
+		if ( ! input ) { return; }
+		var mapNode = document.getElementById( 'mmr-company-map' );
+		var map = {};
+		if ( mapNode ) {
+			try { map = JSON.parse( mapNode.textContent ) || {}; } catch ( err ) { map = {}; }
+		}
+		var hidden = input.closest( 'form' ).querySelector( '[data-field="company_id"]' );
+		input.addEventListener( 'input', function () {
+			if ( ! hidden ) { return; }
+			var key = input.value.trim().toLowerCase();
+			hidden.value = Object.prototype.hasOwnProperty.call( map, key ) ? map[ key ] : '';
+		} );
+	}
+
+	/* ---------------------------------------------------------------
+	 * Forms that need a confirm() before submitting (e.g. archiving a
+	 * company still linked to classes).
+	 * ------------------------------------------------------------- */
+
+	function initConfirmForms() {
+		document.addEventListener( 'submit', function ( e ) {
+			var form = e.target.closest( 'form[data-confirm]' );
+			if ( ! form ) { return; }
+			if ( ! window.confirm( form.getAttribute( 'data-confirm' ) ) ) {
+				e.preventDefault();
+			}
+		} );
+	}
+
+	/* ---------------------------------------------------------------
 	 * Calendar
 	 * ------------------------------------------------------------- */
 
@@ -542,9 +578,9 @@
 				// Tab-separated with display formatting — pastes cleanly into a sheet.
 				var lines = [ data.headers.join( '\t' ) ];
 				data.rows.forEach( function ( r ) {
-					lines.push( [ r.student, r.lessons, formatMoney( r.lesson_total ), formatMoney( r.tbt ), formatMoney( r.to_bill ) ].join( '\t' ) );
+					lines.push( [ r.student, r.company, r.lessons, formatMoney( r.lesson_total ), formatMoney( r.tbt ), formatMoney( r.to_bill ) ].join( '\t' ) );
 				} );
-				lines.push( [ 'TOTAL', '', '', '', formatMoney( data.total ) ].join( '\t' ) );
+				lines.push( [ 'TOTAL', '', '', '', '', formatMoney( data.total ) ].join( '\t' ) );
 				var text = lines.join( '\n' );
 				if ( navigator.clipboard && navigator.clipboard.writeText ) {
 					navigator.clipboard.writeText( text ).then( function () {
@@ -574,9 +610,9 @@
 				}
 				var lines = [ data.headers.map( esc ).join( ',' ) ];
 				data.rows.forEach( function ( r ) {
-					lines.push( [ esc( r.student ), r.lessons, Number( r.lesson_total ).toFixed( 2 ), Number( r.tbt ).toFixed( 2 ), Number( r.to_bill ).toFixed( 2 ) ].join( ',' ) );
+					lines.push( [ esc( r.student ), esc( r.company ), r.lessons, Number( r.lesson_total ).toFixed( 2 ), Number( r.tbt ).toFixed( 2 ), Number( r.to_bill ).toFixed( 2 ) ].join( ',' ) );
 				} );
-				lines.push( [ 'TOTAL', '', '', '', Number( data.total ).toFixed( 2 ) ].join( ',' ) );
+				lines.push( [ 'TOTAL', '', '', '', '', Number( data.total ).toFixed( 2 ) ].join( ',' ) );
 				// BOM so Excel opens the UTF-8 file with Polish characters intact.
 				var blob = new Blob( [ '\uFEFF' + lines.join( '\r\n' ) ], { type: 'text/csv;charset=utf-8' } );
 				var a = document.createElement( 'a' );
@@ -597,6 +633,8 @@
 	document.addEventListener( 'DOMContentLoaded', function () {
 		initModals();
 		initMembersRepeater();
+		initCompanyField();
+		initConfirmForms();
 		initCalendar();
 		initSettlement();
 	} );

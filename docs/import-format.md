@@ -15,7 +15,8 @@ The importer is:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
+  "companies": [],
   "students": [],
   "classes": [],
   "lessons": []
@@ -24,25 +25,44 @@ The importer is:
 
 Every top-level key is optional; a missing array is treated as empty. Order in
 the file does not matter — the importer resolves cross-references itself.
-Since v2 of the plugin only students, classes (with members) and lessons are
-imported; any other top-level keys are ignored.
+Only companies, students, classes (with members) and lessons are imported; any
+other top-level keys are ignored.
 
 ## References (`ref`)
 
 Because real database IDs are unknown before import, entities are linked by
 **string references** you assign, not by numeric IDs:
 
+- A `company` may carry a `ref` (e.g. `"co_awp"`).
 - A `student` may carry a `ref` (any unique string, e.g. `"s_jakub"`).
 - A `class` may carry a `ref` (e.g. `"c_psych12"`).
 - Class members link to a student via `student_ref`.
+- A class links to a company via `company_ref`.
 - Lessons link to a class via `class_ref`.
 
 As a fallback, if a `ref` is omitted, the entity **name** is used as its
-reference. So a lesson may reference a class either by `class_ref` or by
-`class_name` (the class's exact `name`). Unknown references produce a **warning**
-and those lessons are **skipped** (not fatal).
+reference (this applies to companies and classes too — a class may name its
+company via `company_ref` or the company's exact `name`, and a lesson may name
+its class via `class_ref` or `class_name`). Unknown references produce a
+**warning**; unknown class refs on lessons cause those lessons to be **skipped**
+(not fatal).
 
 ---
+
+## `companies`
+
+| field | type | notes |
+|---|---|---|
+| `ref` | string | optional; unique reference for linking |
+| `name` | string | **required**, unique (case-insensitive) |
+| `address` | string | multi-line, as it should appear on an invoice |
+| `nip` | string | Polish tax ID, digits and separators as typed |
+| `notes` | string | PO numbers, invoice-portal quirks, contact person, etc. |
+| `status` | `"active"` \| `"archived"` | optional, default `active` |
+
+```json
+{ "ref": "co_awp", "name": "AWP UW", "nip": "525-000-00-00", "address": "ul. …\n00-000 Warszawa" }
+```
 
 ## `students`
 
@@ -51,12 +71,15 @@ and those lessons are **skipped** (not fatal).
 | `ref` | string | optional; unique reference for linking |
 | `name` | string | **required** |
 | `email` | string | optional |
+| `email_2` | string | optional; secondary e-mail |
+| `phone` | string | optional; free text (`+48`, spaces, dashes allowed) |
+| `level` | string | optional; CEFR-ish free text (`A1`–`C2`, `B2+`, `Matura`…) |
 | `tbt_monthly_fee` | number | optional, default 0 |
 | `notes` | string | optional |
 | `status` | `"active"` \| `"archived"` | optional, default `active` |
 
 ```json
-{ "ref": "s_jakub", "name": "Jakub Nowak", "email": "j@x.pl", "tbt_monthly_fee": 25 }
+{ "ref": "s_jakub", "name": "Jakub Nowak", "email": "j@x.pl", "phone": "+48 600 100 200", "level": "B2", "tbt_monthly_fee": 25 }
 ```
 
 ## `classes`
@@ -67,11 +90,10 @@ and those lessons are **skipped** (not fatal).
 | `name` | string | **required** — this is what shows in the calendar grid |
 | `fee` | number | price per lesson for the whole class |
 | `client_type` | string | free text (`private`, `AWP`, `PWC`, …) |
-| `venue` | string | `online` / `office` / other |
+| `company_ref` | string \| null | reference (or exact name) of a company; omit/`null` for private students |
 | `settle_method` | string | `invoice` / `REVOLUT` / `rozliczenie` / other |
 | `notes` | string | optional |
 | `status` | `"active"` \| `"archived"` | optional |
-| `sort_name` | string | optional; picker ordering |
 | `members` | array | see below |
 
 Each `members` entry:
@@ -123,8 +145,8 @@ Member share snapshots are computed at import time from the class members and
 ## Export
 
 The Tools → Export button produces a JSON file in exactly this format (with
-`ref` values auto-generated as `s{id}` / `c{id}`), so an export can be
-re-imported into an empty install and re-link correctly.
+`ref` values auto-generated as `co{id}` / `s{id}` / `c{id}`), so an export can
+be re-imported into an empty install and re-link correctly.
 
 ## Validation checklist
 

@@ -1,13 +1,14 @@
 # MM REGISTER — WordPress Plugin Specification
 
-**Version:** 2.0 (trimmed)
+**Version:** 2.1
 **Author of spec:** Mariusz Mirecki + Claude
-**Target:** WordPress plugin replacing the REGISTER Google Sheet's scheduling core: weekly lesson calendar, students & classes database, computed monthly settlement report.
+**Target:** WordPress plugin replacing the REGISTER Google Sheet's scheduling core: weekly lesson calendar, students / classes / companies database, computed monthly settlement report.
 **Implementation:** Claude Code. Pure PHP + vanilla JS. **No jQuery. No external JS/CSS frameworks. No build step.**
 
-> v2 supersedes the v1 spec. v1 also shipped Receivables, Budget, Expenses and
-> Projections; those were removed in v2 (see §2). The revision that drove the
-> trim is documented in the repo history.
+> v2 trimmed the plugin down from v1 (Receivables, Budget, Expenses and
+> Projections were removed — see §2). v2.1 adds student contact fields, a
+> Companies page/table, and a per-class Company link; it drops the class
+> `venue` and `sort_name` columns. History is in the repo.
 
 ---
 
@@ -40,7 +41,9 @@ Core philosophy inherited from the sheet:
 3. **Students** — standalone CRUD page.
 4. **Classes** — standalone CRUD page (with members repeater and quick-add
    1-on-1).
-5. **Tools** — JSON import (dry-run first), full JSON export, danger-zone wipe.
+5. **Companies** — standalone CRUD page for invoice/billing details, linked
+   from classes.
+6. **Tools** — JSON import (dry-run first), full JSON export, danger-zone wipe.
 
 ### Removed in v2 (do not re-add)
 - Receivables page and the `mmr_settlements` table
@@ -90,6 +93,9 @@ Tables (all `{$wpdb->prefix}mmr_*`):
 | id | BIGINT PK AI | |
 | name | VARCHAR(190) | required |
 | email | VARCHAR(190) | optional |
+| email_2 | VARCHAR(190) | optional; secondary e-mail |
+| phone | VARCHAR(40) | optional; free text (`+48`, spaces, dashes) |
+| level | VARCHAR(20) | optional; CEFR-ish free text with `A1`–`C2` suggestions |
 | tbt_monthly_fee | DECIMAL(10,2) DEFAULT 0 | monthly surcharge, per student |
 | notes | TEXT | free text |
 | status | ENUM active/archived | archived students hidden from pickers |
@@ -102,20 +108,34 @@ Tables (all `{$wpdb->prefix}mmr_*`):
 | name | VARCHAR(190) | what appears in the grid |
 | fee | DECIMAL(10,2) | price per lesson (whole class) |
 | client_type | VARCHAR(60) | free string; UI offers datalist of existing values |
-| venue | VARCHAR(60) | free string; datalist |
 | settle_method | VARCHAR(60) | free string; datalist |
+| company_id | BIGINT NULL | FK-by-convention to `mmr_companies.id`; NULL for private students; indexed |
 | notes | TEXT | |
 | status | ENUM active/archived | |
-| sort_name | VARCHAR(190) | optional; picker ordering |
 
-### 5.3 `mmr_class_members`
+Class pickers and lists order by `name`.
+
+### 5.3 `mmr_companies`
+| column | type | notes |
+|---|---|---|
+| id | BIGINT PK AI | |
+| name | VARCHAR(190) | required, unique (case-insensitive) |
+| address | TEXT | multi-line, as it should appear on an invoice |
+| nip | VARCHAR(20) | Polish tax ID; digits and separators as typed |
+| notes | TEXT | PO numbers, invoice-portal quirks, contact person, etc. |
+| status | ENUM active/archived | archived companies hidden from the class picker |
+| created_at / updated_at | DATETIME | |
+
+Indexed on `name`.
+
+### 5.4 `mmr_class_members`
 | column | type | notes |
 |---|---|---|
 | id | BIGINT PK AI | |
 | class_id / student_id | BIGINT FK | |
 | share_per_lesson | DECIMAL(10,2) NULL | NULL → equal split of `class.fee` |
 
-### 5.4 `mmr_lessons`
+### 5.5 `mmr_lessons`
 | column | type | notes |
 |---|---|---|
 | id | BIGINT PK AI | |
@@ -127,15 +147,23 @@ Tables (all `{$wpdb->prefix}mmr_*`):
 | note | VARCHAR(190) NULL | |
 | created_at | DATETIME | |
 
-### 5.5 Versioning & upgrades
+### 5.6 Versioning & upgrades
 
-- `MMR_DB_VERSION` (currently `2.0`) is stored in the `mmr_db_version` option.
+- `MMR_DB_VERSION` (currently `2.1`) is stored in the `mmr_db_version` option.
 - On plugin load (and activation), if the stored option is behind, the upgrade
-  routine runs: it first writes a JSON dump of any legacy v1 tables
-  (settlements, budget_items, recurring_expenses, expense_payments,
-  projections) to `wp-content/uploads/mm-register-backups/pre-v2-{timestamp}.json`
-  (best effort — a write failure is logged, not fatal), then drops them, then
-  runs `dbDelta` for the four current tables. The routine is idempotent.
+  routine runs and is idempotent:
+  - **v1 → v2:** dump the legacy tables (settlements, budget_items,
+    recurring_expenses, expense_payments, projections) to
+    `.../mm-register-backups/pre-v2-{timestamp}.json` (best effort), then drop
+    them.
+  - **v2 → v2.1:** since `dbDelta` never drops columns, dump `mmr_classes` to
+    `.../mm-register-backups/pre-v2.1-{timestamp}.json` (best effort), then
+    `ALTER TABLE … DROP COLUMN` whichever of `venue` / `sort_name` still exist.
+  - Finally `dbDelta` runs for the current tables — creating `mmr_companies`
+    and adding the new student columns (`email_2`, `phone`, `level`) and
+    `mmr_classes.company_id`. Backups are written to
+    `wp-content/uploads/mm-register-backups/` (a write failure is logged, not
+    fatal).
 
 ## 6. Admin UI structure
 
@@ -146,7 +174,8 @@ this order:
 2. **Settlement**
 3. **Students**
 4. **Classes**
-5. **Tools**
+5. **Companies**
+6. **Tools**
 
 Design: clean, dense, spreadsheet-like. System font stack. TBT blue `#0859C6`
 as the only accent color.
@@ -175,54 +204,88 @@ Read-only; recomputed from `mmr_lessons` for any requested month. Month picker
 (prev / next / month jumper) defaults to the current month.
 
 **Per-class table** — one row per class with ≥1 lesson:
-Class | Client type | Settle method | Lessons | Rate (snapshot) | Class total | Members.
+Class | Client type | Company | Settle method | Lessons | Rate (snapshot) | Class total | Members.
 *Class total = Σ fee_snapshot* (one-off overrides therefore respected).
-Expanding a row shows the per-student breakdown: each member's share per
-lesson (explicit `share_per_lesson` or equal split), summed for the month,
-plus that student's TBT surcharge. Footer: month total.
+Company shows the linked company name (blank for private students). Expanding a
+row shows the per-student breakdown: each member's share per lesson (explicit
+`share_per_lesson` or equal split), summed for the month, plus that student's
+TBT surcharge. Footer: month total.
 
 **Per-student summary** — the table actually used when issuing KSeF invoices:
-Student | Lessons | Lesson total | TBT surcharge | **To bill**. TBT is added
-once per student per month (across all their classes). Buttons: **Copy to
-clipboard** (TSV) and **Download CSV**. No PDF, no invoice generation.
+Student | Company | Lessons | Lesson total | TBT surcharge | **To bill**. Company
+lists the distinct companies of that student's lessons this month (blank for
+private). TBT is added once per student per month (across all their classes).
+Buttons: **Copy to clipboard** (TSV) and **Download CSV** — both include the
+Company column. No PDF, no invoice generation.
 
 ### 7.3 Students (standalone page)
 
-List: Name | Email | TBT monthly fee | Classes (comma-separated) | Status.
-Search box (name/email), status filter (active / archived / all), sorted by
-name. Row actions: Edit, Archive/Restore — **no hard delete**.
-Add/Edit modal: Name (required) · Email · TBT monthly fee (zł) · Status ·
-Notes (full width), per the layout rules in §8.
+List: Name | Level | Phone | Email | Status. The Email cell shows the primary
+e-mail with `email_2` on a muted second line when present. Search box (name /
+email / email 2 / phone), status filter (active / archived / all), sortable by
+Name (default) or Level. Row actions: Edit, Archive/Restore — **no hard
+delete**.
+
+Add/Edit modal (two-column grid, §8 layout rules):
+
+| Row | Left | Right |
+|---|---|---|
+| 1 | Name (required) | Level |
+| 2 | Email | Email 2 |
+| 3 | Phone | TBT monthly fee (zł) |
+| 4 | Status | *(empty)* |
+| 5 | Notes (spans both columns) | |
+
+Level is a text input backed by a `<datalist>` of `A1`–`C2`; free text allowed.
 
 ### 7.4 Classes (standalone page)
 
-List: Name | Fee | Client type | Venue | Settle method | Members (count +
-names) | Status. Search (name), filters: client type, status. Row actions:
-Edit, Archive/Restore.
+List: Name | Fee | Client type | Company | Settle method | Members (count +
+names) | Status. Search (name), filters: client type, company, status. Row
+actions: Edit, Archive/Restore.
 
 Add/Edit modal layout:
 
 | Row | Left column | Right column |
 |---|---|---|
 | 1 | Name (required) | Fee (zł) |
-| 2 | Client type | Venue |
-| 3 | Settle method | Sort name (optional) |
-| 4 | Status | *(empty)* |
-| 5 | Notes (spans both columns) | |
+| 2 | Client type | Company (optional) |
+| 3 | Settle method | Status |
+| 4 | Notes (spans both columns) | |
 
-Client type / Venue / Settle method are text inputs backed by `<datalist>`s of
-distinct existing values. Below the grid: the **members repeater** — student
-`<select>` + "Share/lesson (zł)" input (placeholder `equal`, blank = equal
-split) + remove button + "+ Add member".
+Client type / Settle method are text inputs backed by `<datalist>`s of distinct
+existing values. **Company** is a searchable text input backed by a `<datalist>`
+of active company names; the form keeps a hidden `company_id` (synced
+client-side) but resolution is authoritative server-side — a non-empty value
+must match an existing company (any status, case-insensitive) or the save is
+rejected with "Unknown company — add it on the Companies page first"; empty =
+no company. A **"Manage companies →"** link opens the Companies page in a new
+tab. Below the grid: the **members repeater** — student `<select>` +
+"Share/lesson (zł)" input (placeholder `equal`, blank = equal split) + remove
+button + "+ Add member".
 
 A **"Quick add: new 1-on-1"** form creates a student and a same-named class
 with one member in one step.
 
-### 7.5 Tools
+### 7.5 Companies (standalone page)
+
+List: Name | NIP | Address (first line, ellipsised, full text in `title`) |
+Classes (count linked) | Status. Search (name / NIP), status filter, sorted by
+name. Row actions: Edit, Archive/Restore — **no hard delete**. Archiving a
+company still linked to classes is allowed but warns first, listing the
+affected class names; archived companies leave the class picker but stay on
+existing classes.
+
+Add/Edit modal: Name (required, full width) · NIP · Status · Address (full-width
+textarea) · Notes (full-width textarea). Save enforces a case-insensitive
+duplicate-name check.
+
+### 7.6 Tools
 
 - **Import**: JSON, dry-run first (counts + warnings before commit); refuses
   non-empty tables unless "merge". Format: `docs/import-format.md`.
-- **Export**: full JSON dump of students, classes, class members, lessons.
+- **Export**: full JSON dump of companies, students, classes, class members,
+  lessons.
 - **Danger zone**: delete all plugin data (typed confirmation).
 
 ## 8. Layout rules
@@ -296,15 +359,23 @@ members) and lessons; the fee printed in the source sheet becomes
 
 ## 11. Acceptance checklist
 
-- [ ] Register menu shows exactly: Calendar, Settlement, Students, Classes, Tools.
+- [ ] Register menu shows exactly: Calendar, Settlement, Students, Classes,
+      Companies, Tools.
 - [ ] No route, file, handler, asset, DB table or doc section for
       Receivables / Budget / Expenses / Projections survives a repo-wide grep
       (the upgrade routine's legacy-table drop list is the only exception).
-- [ ] Pre-drop JSON backup is written to `wp-content/uploads/mm-register-backups/`
-      before any legacy table is dropped.
+- [ ] `venue` and `sort_name` survive nowhere: DB column, form, list, filters,
+      AJAX, JS, CSS, import/export, docs (the v2.1 migration's drop list aside).
+- [ ] Pre-drop JSON backups are written to `wp-content/uploads/mm-register-backups/`
+      before any legacy table or class column is dropped.
 - [ ] Existing students, classes, members and lessons are intact after
       upgrade; fee snapshots unchanged.
 - [ ] Students and Classes are separate pages with their own list + modal.
+- [ ] Companies page has full CRUD, archive-not-delete and case-insensitive
+      duplicate-name protection; the class Company field searches active
+      companies, saves `company_id`, rejects unknown names and allows empty.
+- [ ] Settlement shows the Company column (per-class and per-student) and
+      includes it in the CSV export.
 - [ ] Settlement recomputes any month purely from lessons and produces the
       per-student "to bill" summary, with copy + CSV export.
 - [ ] A 4-member group with fee 200 and no explicit shares shows 50 zł/lesson/member.
