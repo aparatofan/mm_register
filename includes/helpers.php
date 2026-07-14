@@ -87,13 +87,13 @@ function mmr_period_label( $period ) {
 }
 
 /**
- * Polish short weekday abbreviations, Monday-first index 0..6.
+ * Short weekday abbreviations, Monday-first index 0..6.
  *
  * @param int $dow 0=Mon .. 6=Sun.
  * @return string
  */
 function mmr_weekday_abbr( $dow ) {
-	static $days = array( 'PON', 'WT', 'ŚR', 'CZW', 'PT', 'SOB', 'NDZ' );
+	static $days = array( 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN' );
 	return isset( $days[ $dow ] ) ? $days[ $dow ] : '';
 }
 

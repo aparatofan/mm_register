@@ -51,10 +51,10 @@
 	--mmr-gap: 12px;
 
 	/* type — change --mmr-fs only */
-	--mmr-fs: 15px;
-	--mmr-fs-sm:    calc(var(--mmr-fs) * 0.86);   /* ~13px — day letters, helper */
-	--mmr-fs-lg:    calc(var(--mmr-fs) * 1.07);   /* ~16px — Σ footer */
-	--mmr-fs-title: calc(var(--mmr-fs) * 1.87);   /* ~28px — "Calendar" */
+	--mmr-fs: 17px;
+	--mmr-fs-sm:    calc(var(--mmr-fs) * 0.86);   /* ~15px — day letters, helper */
+	--mmr-fs-lg:    calc(var(--mmr-fs) * 1.07);   /* ~18px — Σ footer */
+	--mmr-fs-title: calc(var(--mmr-fs) * 1.87);   /* ~32px — "Calendar" */
 }
 
 /* Page wrapper: replaces core .wrap — full admin content width, no ceiling. */
@@ -293,9 +293,10 @@
 	color: var(--mmr-ink-soft);
 }
 .mmr-calendar .mmr-col-date {
-	font-size: var(--mmr-fs-sm);
+	font-size: var(--mmr-fs-lg);
+	font-weight: 700;
 	font-variant-numeric: tabular-nums;
-	color: var(--mmr-ink-faint);
+	color: var(--mmr-ink-soft);
 }
 
 .mmr-calendar .mmr-slot {

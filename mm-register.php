@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MMR_VERSION', '2.1.0' );
+define( 'MMR_VERSION', '2.2.0' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
 define( 'MMR_DB_VERSION', '2.1' );
