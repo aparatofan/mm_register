@@ -74,14 +74,17 @@ class MMR_Plugin {
 	public function register_menu() {
 		$cap = MMR_CAP;
 
+		// Register keeps its own top-level menu (it is a six-page suite, not a
+		// single screen). Position 3.1 places it immediately below the TBT hub
+		// menu, which sits at position 3.
 		$this->page_hooks['calendar'] = add_menu_page(
-			__( 'Register', 'mm-register' ),
-			__( 'Register', 'mm-register' ),
+			__( 'TBT Register', 'mm-register' ),
+			__( 'TBT Register', 'mm-register' ),
 			$cap,
 			'mmr-calendar',
 			array( $this->admin, 'render_calendar' ),
 			'dashicons-calendar-alt',
-			3
+			3.1
 		);
 
 		$pages = array(
