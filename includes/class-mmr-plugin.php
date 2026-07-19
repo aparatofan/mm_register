@@ -145,6 +145,9 @@ class MMR_Plugin {
 			true
 		);
 
+		$money_th  = mmr_week_money_thresholds();
+		$lesson_th = mmr_week_lesson_thresholds();
+
 		wp_localize_script(
 			'mmr-admin',
 			'MMR',
@@ -153,6 +156,20 @@ class MMR_Plugin {
 				'nonce'    => wp_create_nonce( 'mmr_ajax' ),
 				'slots'    => MMR_SLOTS_PER_DAY,
 				'days'     => MMR_DAY_COLUMNS,
+				// Week-pill status thresholds + labels, so live updates stay in
+				// sync with the server render. Colour still lives only in CSS;
+				// JS only picks the modifier class.
+				'stats'    => array(
+					'money'      => $money_th,
+					'lessons'    => $lesson_th,
+					'words'      => array(
+						'danger' => mmr_status_words( 'danger' ),
+						'warn'   => mmr_status_words( 'warn' ),
+						'good'   => mmr_status_words( 'good' ),
+					),
+					'weekAria'   => __( 'Week total %1$s — %2$s', 'mm-register' ),
+					'lessonAria' => __( 'Lessons this week: %1$s — %2$s', 'mm-register' ),
+				),
 				'i18n'     => array(
 					'confirmDelete' => __( 'Delete this lesson? It will be treated as never having happened.', 'mm-register' ),
 					'noResults'     => __( 'No matching classes', 'mm-register' ),

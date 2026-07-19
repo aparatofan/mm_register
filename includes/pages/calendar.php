@@ -32,15 +32,27 @@ for ( $i = 0; $i < MMR_DAY_COLUMNS; $i++ ) {
 $week_end = $days[ count( $days ) - 1 ]['date'];
 $lessons = MMR_Data::lessons_between( $monday, $week_end );
 
-// Totals.
+// Totals. One loop, two outputs: the week sum and the lesson count are the
+// exact same set of rows, so the two numbers can never disagree.
 $day_totals = array_fill_keys( wp_list_pluck( $days, 'date' ), 0.0 );
 $week_total = 0.0;
+$week_count = 0;
 foreach ( $lessons as $lesson ) {
 	$day_totals[ $lesson->lesson_date ] += (float) $lesson->fee_snapshot;
 	$week_total += (float) $lesson->fee_snapshot;
+	$week_count++;
 }
 $month_period = wp_date( 'Y-m', $monday_ts );
 $month_total = MMR_Data::month_actual_revenue( $month_period );
+
+// Conditional status for the two coloured pills (computed server-side).
+$week_status  = mmr_status_for_amount( $week_total );
+$count_status = mmr_status_for_count( $week_count );
+
+$week_aria_tpl    = __( 'Week total %1$s — %2$s', 'mm-register' );
+$lessons_aria_tpl = __( 'Lessons this week: %1$s — %2$s', 'mm-register' );
+$week_aria    = sprintf( $week_aria_tpl, mmr_money( $week_total ), mmr_status_words( $week_status ) );
+$lessons_aria = sprintf( $lessons_aria_tpl, $week_count, mmr_status_words( $count_status ) );
 
 $prev_week = wp_date( 'Y-m-d', strtotime( '-7 days', $monday_ts ) );
 $next_week = wp_date( 'Y-m-d', strtotime( '+7 days', $monday_ts ) );
@@ -67,8 +79,15 @@ $today = current_time( 'Y-m-d' );
 			<button type="button" class="button" id="mmr-copy-week"><?php esc_html_e( 'Copy week →', 'mm-register' ); ?></button>
 		</div>
 		<div class="mmr-totals">
-			<span class="mmr-total-chip"><?php esc_html_e( 'Week', 'mm-register' ); ?>: <strong id="mmr-week-total"><?php echo mmr_money_esc( $week_total ); ?></strong></span>
-			<span class="mmr-total-chip mmr-total-month"><?php echo esc_html( mmr_period_label( $month_period ) ); ?>: <strong id="mmr-month-total"><?php echo mmr_money_esc( $month_total ); ?></strong></span>
+			<span class="mmr-pill mmr-pill--lessons mmr-pill--<?php echo esc_attr( $count_status ); ?>" id="mmr-lesson-pill" aria-label="<?php echo esc_attr( $lessons_aria ); ?>">
+				<span class="mmr-pill-label"><?php esc_html_e( 'Lessons', 'mm-register' ); ?>:</span> <strong class="mmr-pill-value" id="mmr-lesson-count"><?php echo (int) $week_count; ?></strong>
+			</span>
+			<span class="mmr-pill mmr-pill--week mmr-pill--<?php echo esc_attr( $week_status ); ?>" id="mmr-week-pill" aria-label="<?php echo esc_attr( $week_aria ); ?>">
+				<span class="mmr-pill-label"><?php esc_html_e( 'Week', 'mm-register' ); ?>:</span> <strong class="mmr-pill-value" id="mmr-week-total"><?php echo mmr_money_esc( $week_total ); ?></strong>
+			</span>
+			<span class="mmr-pill mmr-pill--month" id="mmr-month-pill">
+				<span class="mmr-pill-label"><?php echo esc_html( mmr_period_label( $month_period ) ); ?>:</span> <strong class="mmr-pill-value" id="mmr-month-total"><?php echo mmr_money_esc( $month_total ); ?></strong>
+			</span>
 		</div>
 	</div>
 
@@ -80,6 +99,7 @@ $today = current_time( 'Y-m-d' );
 		<?php endforeach; ?>
 	</div>
 
+	<div class="mmr-grid-scroll">
 	<div class="mmr-grid" style="--mmr-cols: <?php echo (int) MMR_DAY_COLUMNS; ?>;">
 		<?php foreach ( $days as $day ) : ?>
 			<div class="mmr-col<?php echo $day['is_today'] ? ' is-today' : ''; ?>" data-day="<?php echo esc_attr( $day['dow'] ); ?>" data-date="<?php echo esc_attr( $day['date'] ); ?>">
@@ -92,6 +112,7 @@ $today = current_time( 'Y-m-d' );
 					$lesson = isset( $lessons[ $key ] ) ? $lessons[ $key ] : null;
 					?>
 					<div class="mmr-slot<?php echo $lesson ? ' is-filled' : ' is-empty'; ?>"
+						tabindex="0" role="button"
 						data-date="<?php echo esc_attr( $day['date'] ); ?>"
 						data-slot="<?php echo esc_attr( $slot ); ?>"
 						<?php if ( $lesson ) : ?>
@@ -113,6 +134,7 @@ $today = current_time( 'Y-m-d' );
 				</div>
 			</div>
 		<?php endforeach; ?>
+	</div>
 	</div>
 
 	<p class="mmr-hint"><?php esc_html_e( 'Click an empty slot to book a lesson. Click a filled slot to edit, override the fee, add a note, move or delete it. Deleting a lesson means it never happened financially.', 'mm-register' ); ?></p>

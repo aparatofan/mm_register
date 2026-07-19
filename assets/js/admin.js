@@ -215,10 +215,12 @@
 	function recomputeTotals( cal ) {
 		var oldWeek = parseFloat( cal.getAttribute( 'data-week-total' ) || '0' );
 		var weekTotal = 0;
+		var lessonCount = 0;
 		cal.querySelectorAll( '.mmr-col' ).forEach( function ( col ) {
 			var dayTotal = 0;
 			col.querySelectorAll( '.mmr-slot.is-filled' ).forEach( function ( slot ) {
 				dayTotal += parseFloat( slot.getAttribute( 'data-fee' ) || '0' );
+				lessonCount += 1;
 			} );
 			var dayEl = col.querySelector( '.mmr-day-total' );
 			if ( dayEl ) { dayEl.textContent = formatMoney( dayTotal ); }
@@ -226,6 +228,9 @@
 		} );
 		var weekEl = document.getElementById( 'mmr-week-total' );
 		if ( weekEl ) { weekEl.textContent = formatMoney( weekTotal ); }
+
+		var countEl = document.getElementById( 'mmr-lesson-count' );
+		if ( countEl ) { countEl.textContent = String( lessonCount ); }
 
 		var monthEl = document.getElementById( 'mmr-month-total' );
 		if ( monthEl ) {
@@ -235,6 +240,40 @@
 			monthEl.textContent = formatMoney( monthBase );
 		}
 		cal.setAttribute( 'data-week-total', String( weekTotal ) );
+
+		updatePillStatus( weekTotal, lessonCount );
+	}
+
+	/* Keep the conditional pills (week money, lesson count) in step with the
+	 * live totals. JS only toggles the semantic modifier class and rewrites the
+	 * aria-label; every colour still comes from CSS tokens. */
+
+	function pillStatus( value, th ) {
+		if ( ! th ) { return null; }
+		if ( value < th.warn ) { return 'danger'; }
+		if ( value <= th.good ) { return 'warn'; }
+		return 'good';
+	}
+
+	function fmtAria( tpl, a, b ) {
+		return String( tpl || '' ).replace( /%1\$s/g, a ).replace( /%2\$s/g, b );
+	}
+
+	function setPill( pill, status, aria ) {
+		if ( ! pill || ! status ) { return; }
+		[ 'danger', 'warn', 'good' ].forEach( function ( s ) {
+			pill.classList.toggle( 'mmr-pill--' + s, s === status );
+		} );
+		if ( aria ) { pill.setAttribute( 'aria-label', aria ); }
+	}
+
+	function updatePillStatus( weekTotal, lessonCount ) {
+		var stats = cfg.stats || {};
+		var words = stats.words || {};
+		var wStatus = pillStatus( weekTotal, stats.money );
+		var cStatus = pillStatus( lessonCount, stats.lessons );
+		setPill( document.getElementById( 'mmr-week-pill' ), wStatus, fmtAria( stats.weekAria, formatMoney( weekTotal ), words[ wStatus ] ) );
+		setPill( document.getElementById( 'mmr-lesson-pill' ), cStatus, fmtAria( stats.lessonAria, String( lessonCount ), words[ cStatus ] ) );
 	}
 
 	function fillSlot( slot, lesson ) {
@@ -451,14 +490,27 @@
 			cal.setAttribute( 'data-month-total', String( parseMoney( monthEl.textContent ) ) );
 		}
 
-		cal.addEventListener( 'click', function ( e ) {
-			var slot = e.target.closest( '.mmr-slot' );
-			if ( ! slot ) { return; }
+		function openSlot( slot ) {
 			if ( slot.classList.contains( 'is-empty' ) ) {
 				openPicker( slot, cal );
 			} else {
 				openPopover( slot, cal );
 			}
+		}
+
+		cal.addEventListener( 'click', function ( e ) {
+			var slot = e.target.closest( '.mmr-slot' );
+			if ( ! slot ) { return; }
+			openSlot( slot );
+		} );
+
+		// Keyboard: every slot is tabbable; Enter / Space opens it.
+		cal.addEventListener( 'keydown', function ( e ) {
+			if ( e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar' ) { return; }
+			var slot = e.target.closest( '.mmr-slot' );
+			if ( ! slot || ! cal.contains( slot ) ) { return; }
+			e.preventDefault();
+			openSlot( slot );
 		} );
 
 		document.addEventListener( 'click', function ( e ) {

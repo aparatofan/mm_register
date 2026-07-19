@@ -18,24 +18,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/* -------------------------------------------------------------------------
- * Owner-only capability
- *
- * Grants a virtual `tbt_owner` capability to the owner account and strips it
- * from everyone else. Nothing is written to the database, so this cannot be
- * corrupted by role-editing plugins and cannot lock you out.
- *
- * This block is guarded and kept byte-for-byte identical to the copy in TBT
- * Hub (tbt-hub.php). Either plugin can define it standalone — whichever loads
- * first wins — so Register keeps enforcing owner-only access even when TBT Hub
- * is deactivated. Deactivating a cosmetic menu plugin must never re-expose
- * this data.
- * ---------------------------------------------------------------------- */
-
-if ( ! defined( 'TBT_OWNER_EMAIL' ) ) {
-	define( 'TBT_OWNER_EMAIL', 'mariuszmirecki@gmail.com' );
-}
-
 if ( ! function_exists( 'tbt_is_owner' ) ) {
 	/**
 	 * Grant a virtual `tbt_owner` capability to the owner account and strip it
@@ -68,7 +50,7 @@ if ( ! function_exists( 'tbt_is_owner' ) ) {
 	}
 }
 
-define( 'MMR_VERSION', '2.1.0' );
+define( 'MMR_VERSION', '2.2.0' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
 define( 'MMR_DB_VERSION', '2.1' );
