@@ -54,6 +54,10 @@ on:
         type: choice
         default: standard
         options: [ standard, verbose ]
+      allow_create:
+        description: 'Allow deploying into a folder that does not hold the plugin yet (genuine first install only)'
+        type: boolean
+        default: false
 
 # Two FTP syncs running at once would race on the same sync-state file and can
 # corrupt it. Queue them instead — and never cancel a run mid-upload, which
@@ -103,6 +107,51 @@ jobs:
           esac
           echo "::add-mask::$server_dir"
           echo "server-dir=$server_dir" >> "$GITHUB_OUTPUT"
+
+      # The deploy client creates any directory it cannot find, so a wrong
+      # FTP_SERVER_DIR does not fail — it silently rebuilds the path as a new
+      # tree and reports success, while the live site never changes. Refuse to
+      # deploy unless the target already looks like the installed plugin.
+      - name: Verify the target is the installed plugin folder
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ steps.ftp.outputs.server-dir }}
+          PROTOCOL: ${{ inputs.protocol || 'ftps' }}
+          PORT: ${{ inputs.port || '21' }}
+          ALLOW_CREATE: ${{ inputs.allow_create || false }}
+        run: |
+          if [ "true" = "$ALLOW_CREATE" ]; then
+            echo "allow_create is set — skipping the target check."
+            exit 0
+          fi
+
+          case "$PROTOCOL" in
+            ftps-legacy) url_scheme="ftps"; tls_flag="" ;;
+            ftps)        url_scheme="ftp";  tls_flag="--ssl-reqd" ;;
+            *)           url_scheme="ftp";  tls_flag="" ;;
+          esac
+
+          # FTP_SERVER_DIR starts with "/", so putting another "/" before it
+          # yields the "//" curl needs to read the path as absolute — the same
+          # way the deploy action's client resolves it. Without that the two can
+          # disagree about which directory they are talking about.
+          target_url="$url_scheme://$FTP_SERVER:$PORT/$FTP_SERVER_DIR"
+
+          if ! listing=$( curl -sS --insecure $tls_flag --connect-timeout 30 \
+                            --user "$FTP_USERNAME:$FTP_PASSWORD" \
+                            --list-only "$target_url" 2>&1 ); then
+            echo "::error::Cannot list the deploy target directory. It probably does not exist — which means the deploy would silently CREATE it and upload into a folder WordPress never loads. Check FTP_SERVER_DIR against the path as the deploy account sees it after login; a deploy-only FTP account is often chrooted deeper than your desktop client. curl said: ${listing}"
+            exit 1
+          fi
+
+          if ! printf '%s\n' "$listing" | tr -d '\r' | grep -qE '(^|/)mm-register\.php$'; then
+            echo "::error::The deploy target exists but does not contain mm-register.php, so it is not the installed plugin folder. Uploading there would leave the live site untouched. Fix FTP_SERVER_DIR, or set allow_create for a genuine first-time install."
+            exit 1
+          fi
+
+          echo "Target verified: mm-register.php is present, this is the installed plugin folder."
 
       - name: Sync changed files to the server
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
