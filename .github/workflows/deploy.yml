@@ -38,6 +38,22 @@ on:
         description: 'Preview only — log what would be uploaded, change nothing on the server'
         type: boolean
         default: false
+      # Diagnostics. Pushes always use the defaults; these only apply to a
+      # manual run, so experimenting here cannot change how a merge deploys.
+      protocol:
+        description: 'Connection type — try "ftp" to test whether TLS is what the data channel is choking on'
+        type: choice
+        default: ftps
+        options: [ ftps, ftp, ftps-legacy ]
+      port:
+        description: 'Port (21 for ftp/ftps, 990 for ftps-legacy)'
+        type: string
+        default: '21'
+      log_level:
+        description: 'Log detail — "verbose" prints every FTP command and reply'
+        type: choice
+        default: standard
+        options: [ standard, verbose ]
 
 # Two FTP syncs running at once would race on the same sync-state file and can
 # corrupt it. Queue them instead — and never cancel a run mid-upload, which
@@ -96,15 +112,16 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           server-dir: ${{ steps.ftp.outputs.server-dir }}
           local-dir: ./
-          protocol: ftps
-          port: 21
+          # A push supplies no inputs, so these fall back to the safe defaults.
+          protocol: ${{ inputs.protocol || 'ftps' }}
+          port: ${{ inputs.port || '21' }}
           # `loose` skips certificate validation. The transfer is still
           # encrypted, but it will not verify the server's identity — which is
           # what makes it work on shared hosts using a self-signed or
           # mismatched certificate. If your host presents a valid certificate,
           # change this to `strict` for a properly authenticated connection.
           security: loose
-          log-level: standard
+          log-level: ${{ inputs.log_level || 'standard' }}
           # Never wipe the remote directory. A clean slate here would delete
           # anything on the server that is not in the repo.
           dangerous-clean-slate: false
