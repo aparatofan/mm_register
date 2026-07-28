@@ -1,0 +1,112 @@
+---
+# Deploys the plugin to the live site over FTPS whenever main changes.
+#
+# How it stays fast: the action keeps a sync-state file
+# (.ftp-deploy-sync-state.json) inside FTP_SERVER_DIR on the server, listing the
+# hash of every file it has uploaded. Each run compares the repo against that
+# file and uploads only what actually changed — usually a handful of files in a
+# few seconds. The first run is the slow one: it has no state file yet, so it
+# uploads the whole plugin. Do not delete that file on the server; losing it
+# forces another full upload.
+#
+# FTP_SERVER_DIR must point straight at the plugin folder and end with a
+# trailing slash, e.g. /wp-content/plugins/mm-register/ (or whatever full path
+# your FTP account needs — some hosts drop you above public_html, some inside
+# it). Pointing it at the plugin folder rather than the server root is what
+# keeps the run quick: the action only ever walks that one directory instead of
+# diffing the entire WordPress install.
+
+name: Deploy to live site
+
+on:
+  push:
+    branches: [ main ]
+    # Documentation-only commits do not need an FTP round trip. If every file in
+    # the push matches one of these, the workflow is skipped entirely.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview only — log what would be uploaded, change nothing on the server'
+        type: boolean
+        default: false
+
+# Two FTP syncs running at once would race on the same sync-state file and can
+# corrupt it. Queue them instead — and never cancel a run mid-upload, which
+# would leave the server half-updated.
+concurrency:
+  group: ftp-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: FTPS upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      # Fail fast with a readable message rather than letting the FTP client
+      # report a confusing connection error thirty seconds in.
+      - name: Verify the required secrets are present
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR }}
+        run: |
+          missing=""
+          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_SERVER_DIR; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing — add them under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          case "$FTP_SERVER_DIR" in
+            */) ;;
+            *)
+              echo "::error::FTP_SERVER_DIR must end with a trailing slash, e.g. /wp-content/plugins/mm-register/"
+              exit 1
+              ;;
+          esac
+
+      - name: Sync changed files to the server
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          local-dir: ./
+          protocol: ftps
+          port: 21
+          # `loose` skips certificate validation. The transfer is still
+          # encrypted, but it will not verify the server's identity — which is
+          # what makes it work on shared hosts using a self-signed or
+          # mismatched certificate. If your host presents a valid certificate,
+          # change this to `strict` for a properly authenticated connection.
+          security: loose
+          log-level: standard
+          # Never wipe the remote directory. A clean slate here would delete
+          # anything on the server that is not in the repo.
+          dangerous-clean-slate: false
+          dry-run: ${{ inputs.dry_run || false }}
+          # Specifying `exclude` replaces the action's defaults, so the .git and
+          # node_modules patterns have to be repeated here.
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/node_modules
+            **/*.md
+            *.md
+            docs/**
+            .github/**
