@@ -116,6 +116,60 @@
 .mmr-total-chip strong { font-variant-numeric: tabular-nums; }
 .mmr-total-month strong { color: var(--mmr-accent); }
 
+/* Settlement ---------------------------------------------------------- */
+
+/* The month being viewed is the page's primary orientation cue, so it is
+   sized as a peer of the title rather than as fine print. */
+.mmr-settlement .mmr-week-range {
+	font-size: 19px;
+	font-weight: 600;
+	color: #101828;
+}
+
+/* Status tokens are declared on .mmr-calendar, which does not apply here.
+   Redeclaring the trio locally keeps the calendar's scoping intact. */
+.mmr-settlement {
+	--mmr-danger:  #B42318;  --mmr-danger-tint:  #FEF3F2;  --mmr-danger-edge:  #F97066;
+	--mmr-warn:    #B54708;  --mmr-warn-tint:    #FFFAEB;  --mmr-warn-edge:    #F79009;
+	--mmr-good:    #067647;  --mmr-good-tint:    #ECFDF3;  --mmr-good-edge:    #17B26A;
+}
+.mmr-settlement .mmr-pill {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	padding: 4px 10px;
+	background: #fff;
+	border: 1px solid var(--mmr-border);
+	border-left-width: 3px;
+	border-radius: 4px;
+	font-size: 13px;
+}
+.mmr-settlement .mmr-pill-value {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.mmr-settlement .mmr-pill--danger {
+	background: var(--mmr-danger-tint);
+	border-left-color: var(--mmr-danger-edge);
+}
+.mmr-settlement .mmr-pill--danger .mmr-pill-value { color: var(--mmr-danger); }
+.mmr-settlement .mmr-pill--warn {
+	background: var(--mmr-warn-tint);
+	border-left-color: var(--mmr-warn-edge);
+}
+.mmr-settlement .mmr-pill--warn .mmr-pill-value { color: var(--mmr-warn); }
+.mmr-settlement .mmr-pill--good {
+	background: var(--mmr-good-tint);
+	border-left-color: var(--mmr-good-edge);
+}
+.mmr-settlement .mmr-pill--good .mmr-pill-value { color: var(--mmr-good); }
+
+.mmr-settle-filterbar { margin: 8px 0 0; }
+.mmr-settle-filterbar input[type="search"] { width: 320px; max-width: 100%; }
+/* Filtered-out rows use a class rather than [hidden], so the split-row
+   toggle keeps sole ownership of `hidden` and open/closed state survives. */
+.mmr-settlement-table tr.mmr-filtered-out { display: none; }
+
 /* =====================================================================
    Calendar redesign — everything below is scoped under .mmr-calendar.
    ===================================================================== */

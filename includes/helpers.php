@@ -56,26 +56,27 @@ function mmr_sanitize_period( $period ) {
 }
 
 /**
- * Human month label from a period, e.g. `2026-07` → `lipiec 2026`.
- * Uses Polish month names regardless of site locale for consistency.
+ * Human month label from a period, e.g. `2026-07` → `July 2026`.
+ * Uses English month names regardless of site locale, matching the English
+ * weekday abbreviations in mmr_weekday_abbr().
  *
  * @param string $period `YYYY-MM`.
  * @return string
  */
 function mmr_period_label( $period ) {
 	static $names = array(
-		1  => 'styczeń',
-		2  => 'luty',
-		3  => 'marzec',
-		4  => 'kwiecień',
-		5  => 'maj',
-		6  => 'czerwiec',
-		7  => 'lipiec',
-		8  => 'sierpień',
-		9  => 'wrzesień',
-		10 => 'październik',
-		11 => 'listopad',
-		12 => 'grudzień',
+		1  => 'January',
+		2  => 'February',
+		3  => 'March',
+		4  => 'April',
+		5  => 'May',
+		6  => 'June',
+		7  => 'July',
+		8  => 'August',
+		9  => 'September',
+		10 => 'October',
+		11 => 'November',
+		12 => 'December',
 	);
 	$period = mmr_sanitize_period( $period );
 	if ( ! $period ) {
@@ -162,6 +163,38 @@ function mmr_week_lesson_thresholds() {
 		'warn' => (int) $thresholds['warn'],
 		'good' => (int) $thresholds['good'],
 	);
+}
+
+/**
+ * Month lesson-count thresholds, filterable. Same band semantics as the week
+ * ones, scaled by four — a month is roughly four teaching weeks. Tune with the
+ * `mm_register_month_lesson_thresholds` filter rather than editing this.
+ *
+ * @return array{warn:int,good:int}
+ */
+function mmr_month_lesson_thresholds() {
+	$thresholds = apply_filters( 'mm_register_month_lesson_thresholds', array( 'warn' => 80, 'good' => 100 ) );
+	return array(
+		'warn' => (int) $thresholds['warn'],
+		'good' => (int) $thresholds['good'],
+	);
+}
+
+/**
+ * Status band for a month lesson count.
+ *
+ * @param int $n Number of booked lessons in the month.
+ * @return string 'danger' | 'warn' | 'good'.
+ */
+function mmr_status_for_month_count( $n ) {
+	$t = mmr_month_lesson_thresholds();
+	if ( $n < $t['warn'] ) {
+		return 'danger';
+	}
+	if ( $n <= $t['good'] ) {
+		return 'warn';
+	}
+	return 'good';
 }
 
 /**

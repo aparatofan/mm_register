@@ -676,7 +676,86 @@
 		} );
 
 		initSettlementSort();
+		initSettlementFilter();
 		initSummaryExport();
+	}
+
+	/* Client-side filter over the same data-* attributes the sort reads. The
+	   filter is deliberately not persisted: a hidden stored filter would make
+	   the table look like it had lost rows on the next visit. */
+	function initSettlementFilter() {
+		var table = document.querySelector( '.mmr-settlement-table' );
+		var input = document.getElementById( 'mmr-class-filter' );
+		if ( ! table || ! input ) { return; }
+
+		var clearBtn = document.getElementById( 'mmr-class-filter-clear' );
+		var countOut = document.getElementById( 'mmr-class-filter-count' );
+		var footTotal = document.getElementById( 'mmr-class-foot-total' );
+		var footLabel = document.getElementById( 'mmr-class-foot-label' );
+		/* The server-rendered total is the source of truth when unfiltered —
+		   restoring the string avoids re-deriving it from rounded row values. */
+		var fullTotal = footTotal ? footTotal.textContent : '';
+		var fullLabel = footLabel ? footLabel.textContent : '';
+
+		function applyFilter() {
+			var tbody = table.tBodies[ 0 ];
+			if ( ! tbody ) { return; }
+
+			var query = input.value.trim().toLowerCase();
+			var groups = settlementGroups( tbody );
+			var visible = 0;
+			var total = 0;
+
+			groups.forEach( function ( group ) {
+				var row = group.row;
+				var haystack = [
+					row.dataset.sortClass || '',
+					row.dataset.sortCompany || '',
+					row.dataset.sortMethod || ''
+				].join( ' ' ).toLowerCase();
+				var match = '' === query || -1 !== haystack.indexOf( query );
+
+				group.nodes.forEach( function ( node ) {
+					node.classList.toggle( 'mmr-filtered-out', ! match );
+				} );
+
+				if ( match ) {
+					visible++;
+					total += parseFloat( row.dataset.classTotal ) || 0;
+				}
+			} );
+
+			if ( clearBtn ) { clearBtn.hidden = '' === query; }
+			if ( countOut ) {
+				countOut.textContent = '' === query
+					? ''
+					: ( i18n.classesShown || 'Showing %1$s of %2$s classes' )
+						.replace( '%1$s', visible )
+						.replace( '%2$s', groups.length );
+			}
+			/* Only the table's own footer follows the filter. The Month total
+			   and To bill chips stay full-month so the headline figures are
+			   never a filtered half-truth. */
+			if ( footTotal ) {
+				footTotal.textContent = '' === query ? fullTotal : formatMoney( total );
+			}
+			if ( footLabel ) {
+				footLabel.textContent = '' === query ? fullLabel : ( i18n.filteredTotal || 'Filtered total' );
+			}
+		}
+
+		input.addEventListener( 'input', applyFilter );
+		if ( clearBtn ) {
+			clearBtn.addEventListener( 'click', function () {
+				input.value = '';
+				applyFilter();
+				input.focus();
+			} );
+		}
+
+		/* Browsers restore search-input values on back/refresh, so reconcile
+		   the table with whatever is in the box at load. */
+		applyFilter();
 	}
 
 	function initSettlementSort() {

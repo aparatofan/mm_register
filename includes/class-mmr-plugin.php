@@ -176,6 +176,9 @@ class MMR_Plugin {
 					'searchClass'   => __( 'Type to search classes…', 'mm-register' ),
 					'saving'        => __( 'Saving…', 'mm-register' ),
 					'error'         => __( 'Something went wrong. Please retry.', 'mm-register' ),
+					/* translators: 1: matching class count, 2: total class count. */
+					'classesShown'  => __( 'Showing %1$s of %2$s classes', 'mm-register' ),
+					'filteredTotal' => __( 'Filtered total', 'mm-register' ),
 				),
 			)
 		);
