@@ -9,12 +9,17 @@
 # uploads the whole plugin. Do not delete that file on the server; losing it
 # forces another full upload.
 #
-# FTP_SERVER_DIR must point straight at the plugin folder and end with a
-# trailing slash, e.g. /wp-content/plugins/mm-register/ (or whatever full path
+# FTP_SERVER_DIR must point straight at the plugin folder, e.g.
+# /public_html/example.com/wp-content/plugins/mm_register (whatever full path
 # your FTP account needs — some hosts drop you above public_html, some inside
-# it). Pointing it at the plugin folder rather than the server root is what
-# keeps the run quick: the action only ever walks that one directory instead of
-# diffing the entire WordPress install.
+# it). A trailing slash is added below if the secret omits it. Pointing it at
+# the plugin folder rather than the server root is what keeps the run quick:
+# the action only ever walks that one directory instead of diffing the entire
+# WordPress install.
+#
+# The folder name must match the one the site already has installed and
+# activated, or the upload lands in a new, deactivated copy and nothing on the
+# site changes.
 
 name: Deploy to live site
 
@@ -53,7 +58,8 @@ jobs:
 
       # Fail fast with a readable message rather than letting the FTP client
       # report a confusing connection error thirty seconds in.
-      - name: Verify the required secrets are present
+      - name: Verify the secrets and normalise the target path
+        id: ftp
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
@@ -70,13 +76,17 @@ jobs:
             echo "::error::Missing repository secret(s):$missing — add them under Settings → Secrets and variables → Actions."
             exit 1
           fi
+
+          # The action joins paths by string concatenation, so a missing
+          # trailing slash silently produces `.../pluginsmm_register`. Append
+          # one instead of failing the run over it — the secret is fine either
+          # way. The derived value is masked so the path never reaches the log.
           case "$FTP_SERVER_DIR" in
-            */) ;;
-            *)
-              echo "::error::FTP_SERVER_DIR must end with a trailing slash, e.g. /wp-content/plugins/mm-register/"
-              exit 1
-              ;;
+            */) server_dir="$FTP_SERVER_DIR" ;;
+            *)  server_dir="$FTP_SERVER_DIR/" ;;
           esac
+          echo "::add-mask::$server_dir"
+          echo "server-dir=$server_dir" >> "$GITHUB_OUTPUT"
 
       - name: Sync changed files to the server
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
@@ -84,7 +94,7 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          server-dir: ${{ steps.ftp.outputs.server-dir }}
           local-dir: ./
           protocol: ftps
           port: 21
