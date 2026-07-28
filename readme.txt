@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.1.0
+Stable tag: 2.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,16 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.3.0 =
+* Settlement: the Class, Company and Settle method headers on the per-class
+  table are now sortable. Click to sort ascending, click again to reverse.
+  Blank companies always sort last, the chosen sort persists across month
+  navigation, and expanded member breakdowns stay open and attached to their
+  own class through a sort.
+
+= 2.2.0 =
+* Calendar: larger type scale, English weekday abbreviations and bold dates.
 
 = 2.1.0 =
 * Students: added phone, second e-mail and level (CEFR) fields; the list now
