@@ -582,6 +582,85 @@
 	 * Settlement
 	 * ------------------------------------------------------------- */
 
+	var MMR_SORT_STORAGE = 'mmrSettlementSort';
+
+	var mmrCollator = new Intl.Collator( 'pl', { sensitivity: 'base', numeric: true } );
+
+	function readStoredSort() {
+		try {
+			var raw = window.localStorage.getItem( MMR_SORT_STORAGE );
+			if ( ! raw ) { return null; }
+			var parsed = JSON.parse( raw );
+			if ( ! parsed || ! parsed.key ) { return null; }
+			return { key: parsed.key, dir: 'desc' === parsed.dir ? 'desc' : 'asc' };
+		} catch ( err ) {
+			return null;
+		}
+	}
+
+	function writeStoredSort( state ) {
+		try {
+			window.localStorage.setItem( MMR_SORT_STORAGE, JSON.stringify( state ) );
+		} catch ( err ) {
+			/* Private mode or storage disabled — sorting still works, it just
+			   will not survive the next page load. Not worth surfacing. */
+		}
+	}
+
+	/* A class row plus its optional split row move as one unit. */
+	function settlementGroups( tbody ) {
+		var groups = [];
+		var rows = tbody.querySelectorAll( 'tr.mmr-settle-row' );
+		Array.prototype.forEach.call( rows, function ( row, index ) {
+			var nodes = [ row ];
+			var next = row.nextElementSibling;
+			if ( next && next.classList.contains( 'mmr-split-row' ) ) {
+				nodes.push( next );
+			}
+			groups.push( { row: row, nodes: nodes, index: index } );
+		} );
+		return groups;
+	}
+
+	function sortSettlementTable( table, key, dir ) {
+		var tbody = table.tBodies[ 0 ];
+		if ( ! tbody ) { return; }
+
+		var attr = 'sort' + key.charAt( 0 ).toUpperCase() + key.slice( 1 ); // sortClass | sortCompany | sortMethod
+		var groups = settlementGroups( tbody );
+		var factor = 'desc' === dir ? -1 : 1;
+
+		groups.sort( function ( a, b ) {
+			var va = ( a.row.dataset[ attr ] || '' ).trim();
+			var vb = ( b.row.dataset[ attr ] || '' ).trim();
+
+			/* Blanks last in both directions. */
+			if ( '' === va && '' === vb ) { return a.index - b.index; }
+			if ( '' === va ) { return 1; }
+			if ( '' === vb ) { return -1; }
+
+			var cmp = mmrCollator.compare( va, vb );
+			if ( 0 === cmp ) { return a.index - b.index; } // stable tie-break
+			return cmp * factor;
+		} );
+
+		var frag = document.createDocumentFragment();
+		groups.forEach( function ( group ) {
+			group.nodes.forEach( function ( node ) { frag.appendChild( node ); } );
+		} );
+		tbody.appendChild( frag );
+
+		/* Header state. */
+		var heads = table.querySelectorAll( 'th.mmr-sortable' );
+		Array.prototype.forEach.call( heads, function ( th ) {
+			if ( th.getAttribute( 'data-mmr-sort' ) === key ) {
+				th.setAttribute( 'aria-sort', 'desc' === dir ? 'descending' : 'ascending' );
+			} else {
+				th.setAttribute( 'aria-sort', 'none' );
+			}
+		} );
+	}
+
 	function initSettlement() {
 		document.addEventListener( 'click', function ( e ) {
 			var toggle = e.target.closest( '.mmr-toggle-split' );
@@ -596,7 +675,39 @@
 			}
 		} );
 
+		initSettlementSort();
 		initSummaryExport();
+	}
+
+	function initSettlementSort() {
+		var table = document.querySelector( '.mmr-settlement-table' );
+		if ( ! table ) { return; }
+
+		var state = readStoredSort();
+		if ( state ) {
+			/* Ignore a stored key that no longer exists in the markup. */
+			if ( table.querySelector( 'th.mmr-sortable[data-mmr-sort="' + state.key + '"]' ) ) {
+				sortSettlementTable( table, state.key, state.dir );
+			} else {
+				state = null;
+			}
+		}
+
+		table.addEventListener( 'click', function ( e ) {
+			var btn = e.target.closest( '.mmr-sort-btn' );
+			if ( ! btn ) { return; }
+			var th = btn.closest( 'th.mmr-sortable' );
+			if ( ! th ) { return; }
+
+			var key = th.getAttribute( 'data-mmr-sort' );
+			var dir = 'asc';
+			if ( state && state.key === key && 'asc' === state.dir ) {
+				dir = 'desc';
+			}
+			state = { key: key, dir: dir };
+			sortSettlementTable( table, key, dir );
+			writeStoredSort( state );
+		} );
 	}
 
 	/* Copy / CSV export of the per-student summary. */

@@ -79,10 +79,25 @@ foreach ( $report['students'] as $s ) {
 		<table class="widefat striped mmr-table mmr-settlement-table">
 			<thead>
 				<tr>
-					<th><?php esc_html_e( 'Class', 'mm-register' ); ?></th>
+					<th class="mmr-sortable" data-mmr-sort="class" aria-sort="none">
+						<button type="button" class="mmr-sort-btn">
+							<span><?php esc_html_e( 'Class', 'mm-register' ); ?></span>
+							<span class="mmr-sort-ind" aria-hidden="true"></span>
+						</button>
+					</th>
 					<th><?php esc_html_e( 'Client type', 'mm-register' ); ?></th>
-					<th><?php esc_html_e( 'Company', 'mm-register' ); ?></th>
-					<th><?php esc_html_e( 'Settle method', 'mm-register' ); ?></th>
+					<th class="mmr-sortable" data-mmr-sort="company" aria-sort="none">
+						<button type="button" class="mmr-sort-btn">
+							<span><?php esc_html_e( 'Company', 'mm-register' ); ?></span>
+							<span class="mmr-sort-ind" aria-hidden="true"></span>
+						</button>
+					</th>
+					<th class="mmr-sortable" data-mmr-sort="method" aria-sort="none">
+						<button type="button" class="mmr-sort-btn">
+							<span><?php esc_html_e( 'Settle method', 'mm-register' ); ?></span>
+							<span class="mmr-sort-ind" aria-hidden="true"></span>
+						</button>
+					</th>
 					<th class="mmr-num"><?php esc_html_e( 'Lessons', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Rate (snapshot)', 'mm-register' ); ?></th>
 					<th class="mmr-num"><?php esc_html_e( 'Class total', 'mm-register' ); ?></th>
@@ -96,7 +111,10 @@ foreach ( $report['students'] as $s ) {
 						$fee_parts[] = mmr_money( $fee ) . ' ×' . $count;
 					}
 					?>
-					<tr class="mmr-settle-row">
+					<tr class="mmr-settle-row"
+						data-sort-class="<?php echo esc_attr( $row['class_name'] ); ?>"
+						data-sort-company="<?php echo esc_attr( $row['company'] ?? '' ); ?>"
+						data-sort-method="<?php echo esc_attr( $row['settle_method'] ?? '' ); ?>">
 						<td><strong><?php echo esc_html( $row['class_name'] ); ?></strong></td>
 						<td><?php echo esc_html( $row['client_type'] ); ?></td>
 						<td><?php echo esc_html( $row['company'] ); ?></td>

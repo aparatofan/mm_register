@@ -50,7 +50,7 @@ if ( ! function_exists( 'tbt_is_owner' ) ) {
 	}
 }
 
-define( 'MMR_VERSION', '2.2.0' );
+define( 'MMR_VERSION', '2.3.0' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
 define( 'MMR_DB_VERSION', '2.1' );
