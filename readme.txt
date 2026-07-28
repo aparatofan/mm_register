@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.3.0
+Stable tag: 2.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,17 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.4.0 =
+* Settlement: added a filter box above the per-class table. Typing narrows the
+  table by class name, company or settle method; the table's own total follows
+  the filter while the Month total and To bill chips stay full-month.
+* Settlement: added a Lessons pill showing the month's lesson count, coloured
+  against monthly targets the same way the calendar's weekly pill is. Tune the
+  bands with the mm_register_month_lesson_thresholds filter.
+* Month names are now English everywhere ("July 2026", not "lipiec 2026"),
+  matching the English weekday abbreviations, and the month shown on the
+  Settlement page is larger.
 
 = 2.3.0 =
 * Settlement: the Class, Company and Settle method headers on the per-class

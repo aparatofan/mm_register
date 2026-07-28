@@ -23,6 +23,20 @@ $period_ts = strtotime( $period . '-01' );
 $prev_period = wp_date( 'Y-m', strtotime( '-1 month', $period_ts ) );
 $next_period = wp_date( 'Y-m', strtotime( '+1 month', $period_ts ) );
 
+// Month lesson count, summed from the same rows the table renders — the
+// settlement query already carries a per-class count, so nothing extra is read.
+$month_lessons = 0;
+foreach ( $report['classes'] as $row ) {
+	$month_lessons += (int) $row['lesson_count'];
+}
+$lessons_status = mmr_status_for_month_count( $month_lessons );
+$lessons_aria = sprintf(
+	/* translators: 1: lesson count, 2: status in words, e.g. "on target". */
+	__( 'Lessons this month: %1$s — %2$s', 'mm-register' ),
+	$month_lessons,
+	mmr_status_words( $lessons_status )
+);
+
 // Payload for the copy / CSV buttons.
 $summary_json = array(
 	'period'  => $period,
@@ -65,6 +79,9 @@ foreach ( $report['students'] as $s ) {
 			</form>
 		</div>
 		<div class="mmr-totals">
+			<span class="mmr-pill mmr-pill--lessons mmr-pill--<?php echo esc_attr( $lessons_status ); ?>" aria-label="<?php echo esc_attr( $lessons_aria ); ?>">
+				<span class="mmr-pill-label"><?php esc_html_e( 'Lessons', 'mm-register' ); ?>:</span> <strong class="mmr-pill-value"><?php echo (int) $month_lessons; ?></strong>
+			</span>
 			<span class="mmr-total-chip"><?php esc_html_e( 'Month total', 'mm-register' ); ?>: <strong><?php echo mmr_money_esc( $report['month_total'] ); ?></strong></span>
 			<span class="mmr-total-chip mmr-total-month"><?php esc_html_e( 'To bill', 'mm-register' ); ?>: <strong><?php echo mmr_money_esc( $report['to_bill_total'] ); ?></strong></span>
 		</div>
@@ -75,6 +92,13 @@ foreach ( $report['students'] as $s ) {
 	<?php else : ?>
 
 	<h2 class="mmr-section-title"><?php esc_html_e( 'Per class', 'mm-register' ); ?></h2>
+	<div class="mmr-filterbar mmr-settle-filterbar">
+		<label class="screen-reader-text" for="mmr-class-filter"><?php esc_html_e( 'Filter classes', 'mm-register' ); ?></label>
+		<input type="search" id="mmr-class-filter" autocomplete="off"
+			placeholder="<?php esc_attr_e( 'Filter by class, company or settle method…', 'mm-register' ); ?>">
+		<button type="button" class="button" id="mmr-class-filter-clear" hidden><?php esc_html_e( 'Clear', 'mm-register' ); ?></button>
+		<span class="mmr-muted" id="mmr-class-filter-count" role="status" aria-live="polite"></span>
+	</div>
 	<div class="mmr-table-scroll">
 		<table class="widefat striped mmr-table mmr-settlement-table">
 			<thead>
@@ -114,7 +138,8 @@ foreach ( $report['students'] as $s ) {
 					<tr class="mmr-settle-row"
 						data-sort-class="<?php echo esc_attr( $row['class_name'] ); ?>"
 						data-sort-company="<?php echo esc_attr( $row['company'] ?? '' ); ?>"
-						data-sort-method="<?php echo esc_attr( $row['settle_method'] ?? '' ); ?>">
+						data-sort-method="<?php echo esc_attr( $row['settle_method'] ?? '' ); ?>"
+						data-class-total="<?php echo esc_attr( $row['class_total'] ); ?>">
 						<td><strong><?php echo esc_html( $row['class_name'] ); ?></strong></td>
 						<td><?php echo esc_html( $row['client_type'] ); ?></td>
 						<td><?php echo esc_html( $row['company'] ); ?></td>
@@ -161,8 +186,8 @@ foreach ( $report['students'] as $s ) {
 			</tbody>
 			<tfoot>
 				<tr>
-					<th colspan="6" class="mmr-foot-label"><?php esc_html_e( 'Month total', 'mm-register' ); ?></th>
-					<th class="mmr-num"><?php echo mmr_money_esc( $report['month_total'] ); ?></th>
+					<th colspan="6" class="mmr-foot-label" id="mmr-class-foot-label"><?php esc_html_e( 'Month total', 'mm-register' ); ?></th>
+					<th class="mmr-num" id="mmr-class-foot-total"><?php echo mmr_money_esc( $report['month_total'] ); ?></th>
 					<th></th>
 				</tr>
 			</tfoot>
