@@ -869,6 +869,238 @@
 	}
 
 	/* ---------------------------------------------------------------
+	 * Events (receivables register)
+	 * ------------------------------------------------------------- */
+
+	function eventFilterArgs( page ) {
+		return {
+			year: page.getAttribute( 'data-year' ) || '',
+			type: page.getAttribute( 'data-type' ) || '',
+			state: page.getAttribute( 'data-state' ) || '',
+			search: page.getAttribute( 'data-search' ) || ''
+		};
+	}
+
+	/* KSEF records a fact that only exists for invoices. The server enforces
+	   this on every write; the control is disabled here so the UI never offers
+	   a tick that would be silently discarded. */
+	function syncKsefField( form ) {
+		if ( ! form ) { return; }
+		var typeField = form.querySelector( '[data-field="type"]' );
+		var ksef = form.querySelector( '[data-field="ksef"]' );
+		if ( ! typeField || ! ksef ) { return; }
+		var isInvoice = typeField.value === 'invoice';
+		ksef.disabled = ! isInvoice;
+		if ( ! isInvoice ) { ksef.checked = false; }
+		var label = ksef.closest( 'label' );
+		if ( label ) { label.classList.toggle( 'is-disabled', ! isInvoice ); }
+	}
+
+	function initEventFlags( page ) {
+		var totals = {
+			issued: document.getElementById( 'mmr-events-issued' ),
+			received: document.getElementById( 'mmr-events-received' ),
+			outstanding: document.getElementById( 'mmr-events-outstanding' )
+		};
+
+		page.addEventListener( 'change', function ( e ) {
+			var box = e.target.closest( '.mmr-event-flag' );
+			if ( ! box ) { return; }
+			var row = box.closest( '.mmr-event-row' );
+			if ( ! row ) { return; }
+
+			var params = eventFilterArgs( page );
+			params.id = row.getAttribute( 'data-id' );
+			params.flag = box.getAttribute( 'data-flag' );
+			params.value = box.checked ? 1 : 0;
+			box.disabled = true;
+
+			function rollback() {
+				box.disabled = false;
+				box.checked = ! box.checked; // Put the control back where it was.
+				alert( i18n.error || 'Error' );
+			}
+
+			// The failure path is the second argument, not a trailing .catch:
+			// a throw while re-rendering must not pretend the write failed.
+			ajax( 'mmr_toggle_event_flag', params ).then( function ( res ) {
+				box.disabled = false;
+				if ( ! res || ! res.success ) {
+					rollback();
+					return;
+				}
+				var ev = res.data.event;
+				row.querySelectorAll( '.mmr-event-flag' ).forEach( function ( input ) {
+					var flag = input.getAttribute( 'data-flag' );
+					if ( ev[ flag ] !== undefined ) { input.checked = !! Number( ev[ flag ] ); }
+				} );
+				var dateCell = row.querySelector( '.mmr-event-paid-date' );
+				if ( dateCell ) { dateCell.textContent = ev.paid_date_display || ''; }
+				row.classList.toggle( 'mmr-event--unpaid', ! Number( ev.paid ) );
+
+				Object.keys( totals ).forEach( function ( key ) {
+					if ( totals[ key ] ) { totals[ key ].textContent = res.data.totals[ key + '_display' ]; }
+				} );
+			}, rollback );
+		} );
+	}
+
+	/* The amount picker: a panel inside the event modal that reads the
+	   computed settlement, so no figure is ever retyped between pages. */
+	function initEventSuggestions( page ) {
+		var panel = document.getElementById( 'mmr-suggest-panel' );
+		var body = document.getElementById( 'mmr-suggest-body' );
+		var labelOut = document.getElementById( 'mmr-suggest-label' );
+		var openBtn = document.getElementById( 'mmr-take-settlement' );
+		if ( ! panel || ! body || ! openBtn ) { return; }
+
+		var form = panel.closest( 'form' );
+		var period = '';
+
+		function issuePeriod() {
+			var field = form.querySelector( '[data-field="issue_date"]' );
+			var value = field && field.value ? field.value : '';
+			return /^\d{4}-\d{2}/.test( value ) ? value.slice( 0, 7 ) : '';
+		}
+
+		function shiftPeriod( value, months ) {
+			var parts = value.split( '-' );
+			var d = new Date( Number( parts[ 0 ] ), Number( parts[ 1 ] ) - 1 + months, 1 );
+			var month = String( d.getMonth() + 1 );
+			return d.getFullYear() + '-' + ( month.length < 2 ? '0' + month : month );
+		}
+
+		function useEntry( entry ) {
+			fillForm( form, {
+				payer_label: entry.label,
+				amount: entry.amount,
+				source_kind: entry.kind,
+				source_id: entry.id,
+				source_period: period
+			} );
+			// A type hint only overwrites the field when the settle method
+			// actually mapped to one — otherwise the current choice stands.
+			if ( entry.type_hint ) {
+				fillForm( form, { type: entry.type_hint } );
+				syncKsefField( form );
+			}
+			panel.hidden = true;
+		}
+
+		function renderGroup( title, entries ) {
+			var section = el( 'div', { 'class': 'mmr-suggest-group' } );
+			section.appendChild( el( 'h4', null, title ) );
+			entries.forEach( function ( entry ) {
+				var row = el( 'div', { 'class': 'mmr-suggest-row' } );
+				var text = el( 'div', { 'class': 'mmr-suggest-text' } );
+				text.appendChild( el( 'span', { 'class': 'mmr-suggest-label' }, entry.label ) );
+				text.appendChild( el( 'span', { 'class': 'mmr-suggest-detail' }, entry.detail ) );
+				if ( entry.billed && entry.billed_note ) {
+					text.appendChild( el( 'span', { 'class': 'mmr-suggest-billed' }, entry.billed_note ) );
+				}
+				row.appendChild( text );
+				row.appendChild( el( 'span', { 'class': 'mmr-suggest-amount' }, entry.amount_display ) );
+				var use = el( 'button', { 'type': 'button', 'class': 'button button-small' }, i18n.use || 'Use' );
+				use.addEventListener( 'click', function () { useEntry( entry ); } );
+				row.appendChild( use );
+				section.appendChild( row );
+			} );
+			return section;
+		}
+
+		function load() {
+			body.textContent = i18n.loading || 'Loading…';
+			ajax( 'mmr_event_suggestions', { period: period } ).then( function ( res ) {
+				if ( ! res || ! res.success ) {
+					body.textContent = i18n.error || 'Error';
+					return;
+				}
+				if ( labelOut ) { labelOut.textContent = res.data.label; }
+				var groups = res.data.groups;
+				var titles = {
+					classes: i18n.suggestClasses || 'Classes',
+					students: i18n.suggestStudents || 'Students',
+					companies: i18n.suggestCompanies || 'Companies'
+				};
+				body.textContent = '';
+				var any = false;
+				[ 'classes', 'students', 'companies' ].forEach( function ( key ) {
+					if ( groups[ key ] && groups[ key ].length ) {
+						any = true;
+						body.appendChild( renderGroup( titles[ key ], groups[ key ] ) );
+					}
+				} );
+				if ( ! any ) {
+					// Name the month, so it is obvious the period — not the
+					// data — may be the thing that is wrong.
+					body.appendChild( el( 'p', { 'class': 'mmr-muted' },
+						( i18n.noSuggestions || 'No lessons booked in %s.' ).replace( '%s', res.data.label ) ) );
+				}
+			} ).catch( function () {
+				body.textContent = i18n.error || 'Error';
+			} );
+		}
+
+		function step( months ) {
+			period = shiftPeriod( period, months );
+			if ( labelOut ) { labelOut.textContent = ''; }
+			load();
+		}
+
+		openBtn.addEventListener( 'click', function () {
+			if ( ! panel.hidden ) {
+				panel.hidden = true;
+				return;
+			}
+			// The month of the Issue date in the form, which itself defaults
+			// to today; the arrows step from there.
+			period = issuePeriod() || period || new Date().toISOString().slice( 0, 7 );
+			panel.hidden = false;
+			load();
+		} );
+		document.getElementById( 'mmr-suggest-prev' ).addEventListener( 'click', function () { step( -1 ); } );
+		document.getElementById( 'mmr-suggest-next' ).addEventListener( 'click', function () { step( 1 ); } );
+		document.getElementById( 'mmr-suggest-close' ).addEventListener( 'click', function () { panel.hidden = true; } );
+
+		// A fresh open of the modal starts from a closed panel.
+		document.addEventListener( 'click', function ( e ) {
+			if ( e.target.closest( '.mmr-open-modal' ) ) { panel.hidden = true; }
+		} );
+	}
+
+	function initEvents() {
+		var page = document.querySelector( '.mmr-events' );
+		if ( ! page ) { return; }
+
+		initEventFlags( page );
+		initEventSuggestions( page );
+
+		var modal = document.getElementById( 'mmr-event-modal' );
+		var form = modal ? modal.querySelector( 'form' ) : null;
+		if ( ! form ) { return; }
+
+		form.addEventListener( 'change', function ( e ) {
+			if ( e.target.matches( '[data-field="type"]' ) ) { syncKsefField( form ); }
+			// Ticking PAID in the form suggests today, matching the list's
+			// inline toggle; the date stays editable.
+			if ( e.target.matches( '[data-field="paid"]' ) ) {
+				var paidDate = form.querySelector( '[data-field="paid_date"]' );
+				if ( paidDate && e.target.checked && ! paidDate.value ) {
+					paidDate.value = new Date().toISOString().slice( 0, 10 );
+				}
+			}
+		} );
+
+		// Must be bound on document, not on the page wrapper: initModals()
+		// listens on document too and was registered first, so this runs after
+		// the form has been reset / filled from data-json. A listener on the
+		// wrapper would fire on the way up, i.e. before it.
+		document.addEventListener( 'click', function ( e ) {
+			if ( e.target.closest( '.mmr-open-modal' ) ) { syncKsefField( form ); }
+		} );
+	}
+
+	/* ---------------------------------------------------------------
 	 * Boot
 	 * ------------------------------------------------------------- */
 
@@ -879,6 +1111,7 @@
 		initConfirmForms();
 		initCalendar();
 		initSettlement();
+		initEvents();
 	} );
 
 } )();

@@ -170,6 +170,77 @@
    toggle keeps sole ownership of `hidden` and open/closed state survives. */
 .mmr-settlement-table tr.mmr-filtered-out { display: none; }
 
+/* Events (receivables register) ---------------------------------------- */
+
+.mmr-events .mmr-events-filterbar { margin: 0; }
+.mmr-events .mmr-events-filterbar input[type="search"] { width: 220px; max-width: 100%; }
+
+/* 11 columns at 1280 px: everything that has a known width is pinned so the
+   Who column keeps whatever is left, and the table never needs to scroll. */
+.mmr-events-table th:nth-child(1),
+.mmr-events-table td:nth-child(1) { width: 78px; }
+.mmr-events-table th:nth-child(2),
+.mmr-events-table td:nth-child(2) { width: 13%; }
+.mmr-events-table th:nth-child(3),
+.mmr-events-table td:nth-child(3) { width: 100px; }
+.mmr-events-table th:nth-child(5),
+.mmr-events-table td:nth-child(5) { width: 112px; }
+.mmr-events-table th:nth-child(9),
+.mmr-events-table td:nth-child(9) { width: 100px; }
+.mmr-events-table th:nth-child(10),
+.mmr-events-table td:nth-child(10) { width: 14%; }
+.mmr-events-table th:nth-child(11),
+.mmr-events-table td:nth-child(11) { width: 130px; }
+.mmr-events-table .mmr-check-col,
+.mmr-events-table .mmr-check-cell { width: 58px; text-align: center; }
+.mmr-events-table .mmr-check-cell input { margin: 0; }
+
+/* Unpaid rows are the working end of this register. Colour is never the only
+   signal — the PAID checkbox stays the primary indicator. */
+.mmr-events-table tr.mmr-event--unpaid td { background: #fffaf5; }
+.mmr-events-table tr.mmr-event--unpaid td:first-child { box-shadow: inset 3px 0 0 var(--mmr-warn-edge, #F79009); }
+
+/* Modal: the KSEF · SENT · PAID row. */
+.mmr-field--checks { gap: 4px; }
+.mmr-field-legend { font-size: 12px; font-weight: 600; }
+.mmr-field--checks .mmr-check { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; font-size: 13px; }
+.mmr-field--checks .mmr-check.is-disabled { opacity: .5; }
+.mmr-form-grid .mmr-field--checks input[type="checkbox"] { width: auto; }
+.mmr-field-action { align-self: flex-start; }
+
+/* Amount picker — a panel inside the event modal, never a second modal. */
+.mmr-suggest {
+	margin-top: 16px;
+	border: 1px solid var(--mmr-border);
+	border-radius: 6px;
+	background: var(--mmr-bg-soft);
+}
+.mmr-suggest[hidden] { display: none; }
+.mmr-suggest-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--mmr-border);
+}
+.mmr-suggest-head .mmr-suggest-close { margin-left: auto; }
+.mmr-suggest-body { max-height: 320px; overflow-y: auto; padding: 8px 10px; }
+.mmr-suggest-group h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mmr-muted); }
+.mmr-suggest-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	gap: 10px;
+	align-items: center;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--mmr-border);
+}
+.mmr-suggest-row:last-child { border-bottom: 0; }
+.mmr-suggest-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mmr-suggest-label { font-weight: 600; font-size: 13px; }
+.mmr-suggest-detail { font-size: 11px; color: var(--mmr-muted); }
+.mmr-suggest-billed { font-size: 11px; color: var(--mmr-muted); font-style: italic; }
+.mmr-suggest-amount { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+
 /* =====================================================================
    Calendar redesign — everything below is scoped under .mmr-calendar.
    ===================================================================== */
@@ -510,9 +581,12 @@
 .mmr-subtable { width: 100%; border-collapse: collapse; margin: 4px 0; background: var(--mmr-bg-soft); }
 .mmr-subtable th, .mmr-subtable td { padding: 4px 8px; border-bottom: 1px solid var(--mmr-border); font-size: 12px; text-align: left; }
 
-/* Sortable settlement headers */
-.mmr-settlement-table th.mmr-sortable { padding: 0; }
-.mmr-settlement-table th.mmr-sortable .mmr-sort-btn {
+/* Sortable headers — settlement sorts client-side (a <button>), events sort
+   server-side (an <a>); both share this presentation. */
+.mmr-settlement-table th.mmr-sortable,
+.mmr-events-table th.mmr-sortable { padding: 0; }
+.mmr-settlement-table th.mmr-sortable .mmr-sort-btn,
+.mmr-events-table th.mmr-sortable .mmr-sort-btn {
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -526,19 +600,30 @@
 	text-align: left;
 	cursor: pointer;
 }
-.mmr-settlement-table th.mmr-sortable .mmr-sort-btn:hover { color: #0856c9; }
-.mmr-settlement-table th.mmr-sortable .mmr-sort-btn:focus-visible {
+.mmr-settlement-table th.mmr-sortable .mmr-sort-btn:hover,
+.mmr-events-table th.mmr-sortable .mmr-sort-btn:hover { color: #0856c9; }
+.mmr-settlement-table th.mmr-sortable .mmr-sort-btn:focus-visible,
+.mmr-events-table th.mmr-sortable .mmr-sort-btn:focus-visible {
 	outline: 2px solid #0856c9;
 	outline-offset: -2px;
 }
-.mmr-settlement-table .mmr-sort-ind { opacity: 0; font-size: 10px; line-height: 1; }
-.mmr-settlement-table th.mmr-sortable:hover .mmr-sort-ind { opacity: .35; }
-.mmr-settlement-table th.mmr-sortable .mmr-sort-ind::after { content: '▲'; }
+.mmr-events-table th.mmr-sortable .mmr-sort-btn { text-decoration: none; }
+.mmr-settlement-table .mmr-sort-ind,
+.mmr-events-table .mmr-sort-ind { opacity: 0; font-size: 10px; line-height: 1; }
+.mmr-settlement-table th.mmr-sortable:hover .mmr-sort-ind,
+.mmr-events-table th.mmr-sortable:hover .mmr-sort-ind { opacity: .35; }
+.mmr-settlement-table th.mmr-sortable .mmr-sort-ind::after,
+.mmr-events-table th.mmr-sortable .mmr-sort-ind::after { content: '▲'; }
 .mmr-settlement-table th[aria-sort="ascending"] .mmr-sort-btn,
-.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-btn { color: #0856c9; }
+.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-btn,
+.mmr-events-table th[aria-sort="ascending"] .mmr-sort-btn,
+.mmr-events-table th[aria-sort="descending"] .mmr-sort-btn { color: #0856c9; }
 .mmr-settlement-table th[aria-sort="ascending"] .mmr-sort-ind,
-.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-ind { opacity: 1; }
-.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-ind::after { content: '▼'; }
+.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-ind,
+.mmr-events-table th[aria-sort="ascending"] .mmr-sort-ind,
+.mmr-events-table th[aria-sort="descending"] .mmr-sort-ind { opacity: 1; }
+.mmr-settlement-table th[aria-sort="descending"] .mmr-sort-ind::after,
+.mmr-events-table th[aria-sort="descending"] .mmr-sort-ind::after { content: '▼'; }
 
 .mmr-settle-row td { vertical-align: top; }
 .mmr-section-title { margin: 24px 0 8px; }

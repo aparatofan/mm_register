@@ -56,6 +56,36 @@ function mmr_sanitize_period( $period ) {
 }
 
 /**
+ * Validate a `Y-m-d` date string, calendar included.
+ *
+ * @param mixed $date Raw date.
+ * @return bool
+ */
+function mmr_valid_date( $date ) {
+	if ( ! is_string( $date ) || ! preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/', $date, $m ) ) {
+		return false;
+	}
+	return checkdate( (int) $m[2], (int) $m[3], (int) $m[1] );
+}
+
+/**
+ * Human day label from a date, e.g. `2026-07-01` → `1 Jul 2026`.
+ * English month abbreviations regardless of site locale, matching
+ * mmr_period_label() and mmr_weekday_abbr().
+ *
+ * @param string $date `Y-m-d`.
+ * @return string Empty string when the date is invalid or empty.
+ */
+function mmr_date_label( $date ) {
+	static $names = array( 1 => 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' );
+	if ( ! mmr_valid_date( $date ) ) {
+		return '';
+	}
+	list( $year, $month, $day ) = explode( '-', $date );
+	return (int) $day . ' ' . $names[ (int) $month ] . ' ' . $year;
+}
+
+/**
  * Human month label from a period, e.g. `2026-07` → `July 2026`.
  * Uses English month names regardless of site locale, matching the English
  * weekday abbreviations in mmr_weekday_abbr().

@@ -54,6 +54,8 @@ class MMR_Import {
 		$students  = isset( $data['students'] ) && is_array( $data['students'] ) ? $data['students'] : array();
 		$classes   = isset( $data['classes'] ) && is_array( $data['classes'] ) ? $data['classes'] : array();
 		$lessons   = isset( $data['lessons'] ) && is_array( $data['lessons'] ) ? $data['lessons'] : array();
+		// Absent in v3 exports — silently treated as empty so they still import.
+		$events    = isset( $data['events'] ) && is_array( $data['events'] ) ? $data['events'] : array();
 
 		// Build the set of known class refs / names for warning detection.
 		$class_refs = array();
@@ -80,6 +82,7 @@ class MMR_Import {
 			'classes'     => count( $classes ),
 			'memberships' => $membership_count,
 			'lessons'     => count( $lessons ),
+			'events'      => count( $events ),
 		);
 
 		// Warnings — unknown class refs on lessons.
@@ -113,12 +116,27 @@ class MMR_Import {
 			$seen[ $name ] = true;
 		}
 
+		// Warnings — events without a payer, which the validator cannot save.
+		$nameless_events = 0;
+		foreach ( $events as $event ) {
+			if ( '' === trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' ) ) {
+				$nameless_events++;
+			}
+		}
+		if ( $nameless_events ) {
+			$result['warnings'][] = sprintf(
+				/* translators: %d: number of events without a payer. */
+				_n( '%d event has no "who" and will be skipped.', '%d events have no "who" and will be skipped.', $nameless_events, 'mm-register' ),
+				$nameless_events
+			);
+		}
+
 		if ( ! $commit || $result['blocked'] ) {
 			return $result;
 		}
 
 		// ---- Commit ----
-		$this->commit( $companies, $students, $classes, $lessons, $result );
+		$this->commit( $companies, $students, $classes, $lessons, $events, $result );
 		$result['committed'] = true;
 		return $result;
 	}
@@ -146,9 +164,10 @@ class MMR_Import {
 	 * @param array $students  Students.
 	 * @param array $classes   Classes.
 	 * @param array $lessons   Lessons.
+	 * @param array $events    Events.
 	 * @param array $result    Result accumulator (by reference).
 	 */
-	protected function commit( $companies, $students, $classes, $lessons, &$result ) {
+	protected function commit( $companies, $students, $classes, $lessons, $events, &$result ) {
 		$company_map = array(); // ref/name => id.
 		$student_map = array(); // ref/name => id.
 		$class_map = array();    // ref/name => id.
@@ -256,6 +275,16 @@ class MMR_Import {
 			$imported['lessons']++;
 		}
 
+		// Events reference nothing by ref — the payer is stored verbatim as
+		// text. Every field goes through the same validator the form uses.
+		foreach ( $events as $event ) {
+			if ( ! is_array( $event ) || '' === trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' ) ) {
+				continue;
+			}
+			MMR_Data::save_event( $event );
+			$imported['events']++;
+		}
+
 		$result['imported'] = $imported;
 	}
 
@@ -269,13 +298,14 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 3,
+			'version'        => 4,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
 			'companies'      => array(),
 			'students'       => array(),
 			'classes'        => array(),
 			'lessons'        => array(),
+			'events'         => array(),
 		);
 
 		$company_ref = array();
@@ -341,6 +371,27 @@ class MMR_Import {
 				'slot'         => (int) $l->slot,
 				'fee_snapshot' => (float) $l->fee_snapshot,
 				'note'         => $l->note,
+			);
+		}
+
+		// Events carry no refs: the payer is a text label, and source_* is a
+		// plain record of where the figure came from.
+		$events = $wpdb->get_results( 'SELECT * FROM ' . MMR_DB::table( 'events' ) . ' ORDER BY issue_date ASC, id ASC' ); // phpcs:ignore WordPress.DB.PreparedSQL
+		foreach ( $events as $e ) {
+			$out['events'][] = array(
+				'type'          => $e->type,
+				'doc_number'    => $e->doc_number,
+				'issue_date'    => $e->issue_date,
+				'payer_label'   => $e->payer_label,
+				'amount'        => (float) $e->amount,
+				'ksef'          => (int) $e->ksef,
+				'sent'          => (int) $e->sent,
+				'paid'          => (int) $e->paid,
+				'paid_date'     => $e->paid_date,
+				'notes'         => $e->notes,
+				'source_kind'   => $e->source_kind,
+				'source_id'     => ( null === $e->source_id ) ? null : (int) $e->source_id,
+				'source_period' => $e->source_period,
 			);
 		}
 

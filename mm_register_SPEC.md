@@ -1,14 +1,16 @@
 # MM REGISTER — WordPress Plugin Specification
 
-**Version:** 2.1
+**Version:** 2.2
 **Author of spec:** Mariusz Mirecki + Claude
-**Target:** WordPress plugin replacing the REGISTER Google Sheet's scheduling core: weekly lesson calendar, students / classes / companies database, computed monthly settlement report.
+**Target:** WordPress plugin replacing the REGISTER Google Sheet's scheduling core: weekly lesson calendar, students / classes / companies database, computed monthly settlement report, register of issued documents.
 **Implementation:** Claude Code. Pure PHP + vanilla JS. **No jQuery. No external JS/CSS frameworks. No build step.**
 
 > v2 trimmed the plugin down from v1 (Receivables, Budget, Expenses and
 > Projections were removed — see §2). v2.1 adds student contact fields, a
 > Companies page/table, and a per-class Company link; it drops the class
-> `venue` and `sort_name` columns. History is in the repo.
+> `venue` and `sort_name` columns. v2.2 adds the **Events** page and the
+> `mmr_events` table — receivables tracking, deliberately reintroduced on a
+> new data model (see §2 and §7.3). History is in the repo.
 
 ---
 
@@ -38,12 +40,16 @@ Core philosophy inherited from the sheet:
 1. **Calendar** — the weekly grid (default page).
 2. **Settlement** — read-only computed monthly report with a per-student
    "to bill" summary, copy-to-clipboard and CSV export.
-3. **Students** — standalone CRUD page.
-4. **Classes** — standalone CRUD page (with members repeater and quick-add
+3. **Events** — the receivables register: a chronological list of documents
+   issued (invoice / revolut / cash) with KSEF · SENT · PAID ticks, a payment
+   date and a year-scoped **Outstanding** total. Amounts are taken from the
+   computed settlement through a picker, never retyped.
+4. **Students** — standalone CRUD page.
+5. **Classes** — standalone CRUD page (with members repeater and quick-add
    1-on-1).
-5. **Companies** — standalone CRUD page for invoice/billing details, linked
+6. **Companies** — standalone CRUD page for invoice/billing details, linked
    from classes.
-6. **Tools** — JSON import (dry-run first), full JSON export, danger-zone wipe.
+7. **Tools** — JSON import (dry-run first), full JSON export, danger-zone wipe.
 
 ### Removed in v2 (do not re-add)
 - Receivables page and the `mmr_settlements` table
@@ -51,8 +57,16 @@ Core philosophy inherited from the sheet:
 - Expenses page and `mmr_recurring_expenses` / `mmr_expense_payments`
 - Projections page and `mmr_projections`
 
-No paid/unpaid tracking, no invoice register, no attendance, no e-mail, no
-reporting charts, no settings page beyond Tools.
+**v2.2 reintroduces receivables tracking on purpose, as Events, on the new
+`mmr_events` table (§5.6, §7.3).** The ban above stands only for the v1
+`mmr_settlements` table and its Receivables page: `mmr_settlements` stays in
+`MMR_DB::legacy_keys()` and is still dropped on every upgrade, so `events`
+must never be added to that list. Events is not a revival of Receivables — it
+records issued documents with a text payer label, not per-student balances.
+
+No attendance, no e-mail, no reporting charts, no settings page beyond Tools.
+Invoice *generation* remains out of scope: Events records what KSeF issued, it
+does not create it.
 
 ## 3. Key modelling decisions
 
@@ -66,6 +80,16 @@ reporting charts, no settings page beyond Tools.
    future lessons. This must never be broken.
 4. **Invoicing is out of scope.** KSeF handles it; the plugin produces the
    per-student "to bill" numbers.
+5. **An event's amount is a snapshot, and its payer is a label.** Once written
+   to `mmr_events.amount` the figure never re-derives from lessons — adding,
+   re-rating or deleting a lesson in an already-billed month must leave every
+   existing event untouched, exactly as `fee_snapshot` does (§3.3). The payer
+   is stored as free text, not a foreign key, because real documents do not fit
+   one: a month's settlement for one payer is routinely split across several
+   documents (86% / 14% of the same amount), and the name on a document sits at
+   whichever level was convenient — class, student or company. The optional
+   `source_kind` / `source_id` / `source_period` trio records where the figure
+   came from without constraining the row, and is never cleared by later edits.
 
 ## 4. Technical requirements
 
@@ -147,9 +171,34 @@ Indexed on `name`.
 | note | VARCHAR(190) NULL | |
 | created_at | DATETIME | |
 
-### 5.6 Versioning & upgrades
+### 5.6 `mmr_events`
 
-- `MMR_DB_VERSION` (currently `2.1`) is stored in the `mmr_db_version` option.
+The receivables register. One row per document issued.
+
+| column | type | notes |
+|---|---|---|
+| id | BIGINT PK AI | |
+| type | VARCHAR(20) DEFAULT `invoice` | one of `invoice` / `revolut` / `cash`, validated server-side |
+| doc_number | VARCHAR(190) NULL | free text: KSeF ID, `czekam na PO`, or empty |
+| issue_date | DATE | day the document was issued |
+| payer_label | VARCHAR(190) | the "who", always stored verbatim as text (§3.5) |
+| amount | DECIMAL(10,2) DEFAULT 0 | snapshot; never re-derived from lessons |
+| ksef | TINYINT(1) DEFAULT 0 | **invoices only** — any other type forces 0, server-side |
+| sent | TINYINT(1) DEFAULT 0 | a document, e-mail or SMS went out; manual tick |
+| paid | TINYINT(1) DEFAULT 0 | the money arrived |
+| paid_date | DATE NULL | set to today when PAID is ticked; cleared when unticked |
+| notes | TEXT NULL | NIP, address, "for the whole course", … |
+| source_kind | VARCHAR(10) NULL | `class` / `student` / `company`, or NULL when typed by hand |
+| source_id | BIGINT NULL | id of that class / student / company |
+| source_period | CHAR(7) NULL | `YYYY-MM` the suggestion was taken from |
+| created_at / updated_at | DATETIME | |
+
+Indexed on `issue_date`, `paid`, `type` and `(source_kind, source_id)`.
+Default list order is `issue_date DESC, id DESC`.
+
+### 5.7 Versioning & upgrades
+
+- `MMR_DB_VERSION` (currently `2.2`) is stored in the `mmr_db_version` option.
 - On plugin load (and activation), if the stored option is behind, the upgrade
   routine runs and is idempotent:
   - **v1 → v2:** dump the legacy tables (settlements, budget_items,
@@ -159,9 +208,11 @@ Indexed on `name`.
   - **v2 → v2.1:** since `dbDelta` never drops columns, dump `mmr_classes` to
     `.../mm-register-backups/pre-v2.1-{timestamp}.json` (best effort), then
     `ALTER TABLE … DROP COLUMN` whichever of `venue` / `sort_name` still exist.
+  - **v2.1 → v2.2:** no bespoke routine — `dbDelta` creates `mmr_events`. No
+    existing table is touched and nothing is dropped.
   - Finally `dbDelta` runs for the current tables — creating `mmr_companies`
-    and adding the new student columns (`email_2`, `phone`, `level`) and
-    `mmr_classes.company_id`. Backups are written to
+    and adding the new student columns (`email_2`, `phone`, `level`),
+    `mmr_classes.company_id` and the `mmr_events` table. Backups are written to
     `wp-content/uploads/mm-register-backups/` (a write failure is logged, not
     fatal).
 
@@ -172,10 +223,11 @@ this order:
 
 1. **Calendar** (default)
 2. **Settlement**
-3. **Students**
-4. **Classes**
-5. **Companies**
-6. **Tools**
+3. **Events**
+4. **Students**
+5. **Classes**
+6. **Companies**
+7. **Tools**
 
 Design: clean, dense, spreadsheet-like. System font stack. TBT blue `#0859C6`
 as the only accent color.
@@ -218,7 +270,78 @@ private). TBT is added once per student per month (across all their classes).
 Buttons: **Copy to clipboard** (TSV) and **Download CSV** — both include the
 Company column. No PDF, no invoice generation.
 
-### 7.3 Students (standalone page)
+### 7.3 Events (receivables register)
+
+The question this page answers is **"what have I issued, and who still owes me
+money?"** — the one the original REGISTER spreadsheet's `SETTLEMENT` sheet
+answered, and the one the computed Settlement page deliberately does not. The
+two are independent: Settlement stores nothing, Events stores everything.
+
+**Toolbar.** Year selector (distinct `YEAR(issue_date)` plus the current year,
+default = current year), type filter (all / invoice / revolut / cash), status
+filter (all / **unpaid** / paid / not sent / invoice not in KSeF), search over
+`payer_label` and `doc_number`, and **+ Add event**. On the right, three
+`.mmr-total-chip`s — **all three scoped to the selected year and the active
+filters, with the label saying so** — computed in one grouped query:
+
+| Chip | Value |
+|---|---|
+| Issued | Σ amount |
+| Received | Σ amount where paid |
+| **Outstanding** | Σ amount where unpaid |
+
+Outstanding replaces the spreadsheet's `SUMIF(…, FALSE, …)` counter (which
+silently stopped at row 999; this has no ceiling) and gets the emphasis
+treatment, as "To bill" has on Settlement.
+
+**List:** Type | # | Issue date | Who | Amount | KSEF | SENT | PAID | Paid date
+| Notes | actions. Sorted `issue_date DESC, id DESC` by default — the working
+end of the register is the recent unpaid rows; Issue date, Who and Amount are
+sortable (server-side, same header markup as Settlement).
+
+- **KSEF, SENT and PAID are inline AJAX checkboxes, not modal fields.** Ticking
+  PAID is the most frequent action here and must never require a form.
+- **KSEF applies to invoices only** — `revolut` and `cash` render `—` with no
+  control, and every write path forces `ksef = 0` for them regardless of what
+  the client sends.
+- Ticking PAID sets `paid_date` to today when empty and updates the row and the
+  three chips with no reload; unticking clears the date.
+- Unpaid rows carry `.mmr-event--unpaid`; the PAID checkbox stays the primary
+  signal, so colour is never the only one.
+- Row actions: Edit (modal) and **Delete** — a genuine delete behind a
+  confirmation. Archive-not-delete does not apply: an event is the record of a
+  document, and a wrong row must not linger inside a financial total.
+
+**Add/Edit modal** (§8.2 grid): Type · Issue date (defaults to today) / Who
+(required) + **Take from settlement** · Amount / Document number · Paid date /
+KSEF · SENT · PAID / Notes (full width), plus hidden `id` and the `source_*`
+trio. Switching Type away from `invoice` disables and unticks KSEF client-side;
+the server enforces the same rule regardless.
+
+**The amount picker** is the point of the feature: no number is ever retyped
+from one page into another. **Take from settlement** opens a panel *inside* the
+modal (never a nested modal) whose period defaults to the month of the Issue
+date currently in the form, with ‹ / › to step months. It lists three groups
+built by `MMR_Data::event_suggestions()` from `MMR_Data::settlement()` — which
+it reads and never modifies:
+
+- **Classes** — `class_total` (lesson fees only; the class is what gets
+  invoiced), detail = lesson count + rates used.
+- **Students** — `to_bill` (lesson shares + the TBT surcharge, once a month).
+- **Companies** — Σ `class_total` of that company's classes this month, with
+  the rolled-up classes named in the detail so it is never an opaque number.
+
+`Use` fills Who, Amount, Type (only when the class's `settle_method` maps to
+one; for a company only when every rolled-up class agrees) and the hidden
+`source_*` fields, then closes the panel. **Every field stays editable
+afterwards, and editing does not clear `source_*`** — the provenance records
+where the figure came from, not that it was left untouched. Because the trio is
+recorded, the picker marks a suggestion that already produced an event for that
+period (`already billed — 2 200,00 zł on 1 Jul`): a hint, never a block, since
+splitting one settlement across several documents is normal. Empty state names
+the month, so it is obvious the period — not the data — may be wrong.
+
+### 7.4 Students (standalone page)
 
 List: Name | Level | Phone | Email | Status. The Email cell shows the primary
 e-mail with `email_2` on a muted second line when present. Search box (name /
@@ -238,7 +361,7 @@ Add/Edit modal (two-column grid, §8 layout rules):
 
 Level is a text input backed by a `<datalist>` of `A1`–`C2`; free text allowed.
 
-### 7.4 Classes (standalone page)
+### 7.5 Classes (standalone page)
 
 List: Name | Fee | Client type | Company | Settle method | Members (count +
 names) | Status. Search (name), filters: client type, company, status. Row
@@ -267,7 +390,7 @@ button + "+ Add member".
 A **"Quick add: new 1-on-1"** form creates a student and a same-named class
 with one member in one step.
 
-### 7.5 Companies (standalone page)
+### 7.6 Companies (standalone page)
 
 List: Name | NIP | Address (first line, ellipsised, full text in `title`) |
 Classes (count linked) | Status. Search (name / NIP), status filter, sorted by
@@ -280,7 +403,7 @@ Add/Edit modal: Name (required, full width) · NIP · Status · Address (full-wi
 textarea) · Notes (full-width textarea). Save enforces a case-insensitive
 duplicate-name check.
 
-### 7.6 Tools
+### 7.7 Tools
 
 - **Import**: JSON, dry-run first (counts + warnings before commit); refuses
   non-empty tables unless "merge". Format: `docs/import-format.md`.
@@ -348,8 +471,12 @@ members) and lessons; the fee printed in the source sheet becomes
 
 ## 10. Out of scope (explicitly)
 
-- Invoice generation of any kind (external KSeF program handles it)
-- Paid/unpaid or receivables tracking
+- Invoice generation of any kind (external KSeF program handles it). Events
+  records documents issued in KSeF; it does not create them.
+- Payment-gateway or bank integration; automatic payment matching. PAID is a
+  manual tick, as SENT is.
+- Overdue calculations, due dates, ageing buckets, dunning. Events answers
+  "who still owes me", not "who is late" — there is no due-date column.
 - Cancelled-lesson tracking / attendance analytics
 - Budget, expenses or projection tracking
 - Multi-user access, roles, front-end views
@@ -359,11 +486,14 @@ members) and lessons; the fee printed in the source sheet becomes
 
 ## 11. Acceptance checklist
 
-- [ ] Register menu shows exactly: Calendar, Settlement, Students, Classes,
-      Companies, Tools.
-- [ ] No route, file, handler, asset, DB table or doc section for
-      Receivables / Budget / Expenses / Projections survives a repo-wide grep
-      (the upgrade routine's legacy-table drop list is the only exception).
+- [ ] Register menu shows exactly: Calendar, Settlement, Events, Students,
+      Classes, Companies, Tools.
+- [ ] No route, file, handler, asset, DB table or doc section for the v1
+      Receivables / Budget / Expenses / Projections pages survives a repo-wide
+      grep (the upgrade routine's legacy-table drop list is the only
+      exception). The v2.2 Events page and `mmr_events` table are **not**
+      covered by this: they are current scope (§2, §7.3), and `events` must
+      never appear in `MMR_DB::legacy_keys()`.
 - [ ] `venue` and `sort_name` survive nowhere: DB column, form, list, filters,
       AJAX, JS, CSS, import/export, docs (the v2.1 migration's drop list aside).
 - [ ] Pre-drop JSON backups are written to `wp-content/uploads/mm-register-backups/`
@@ -385,5 +515,35 @@ members) and lessons; the fee printed in the source sheet becomes
       menu folded and unfolded, with no horizontal scrollbar.
 - [ ] No form control overflows any modal at any of those widths.
 - [ ] Changing a class fee does not alter past months' totals.
+
+### Events (v2.2)
+
+- [ ] `{$wpdb->prefix}mmr_events` is created by `dbDelta` on upgrade from 2.1
+      with no data loss in any existing table; `mmr_db_version` reads `2.2`;
+      a fresh install and an upgrade end with the same schema.
+- [ ] `legacy_keys()` does not contain `events`; `all_keys()` and `is_empty()`
+      do.
+- [ ] The Settlement page's markup and numbers are unchanged, and
+      `MMR_Data::settlement()` has no key added, renamed or removed.
+- [ ] Taking a class suggestion fills Who, Amount and Type in one click, with
+      no typing.
+- [ ] A student suggestion's amount equals that student's "To bill" on the
+      Settlement page for the same month, TBT surcharge included.
+- [ ] A company suggestion equals the sum of its classes' totals for the month,
+      and its detail names those classes.
+- [ ] Adding a lesson to a month that already has events leaves every existing
+      event's amount unchanged.
+- [ ] KSEF cannot be set on a `revolut` or `cash` event — not from the list,
+      not from the modal, not by a crafted AJAX request.
+- [ ] Ticking PAID in the list sets today's date, updates the row and the three
+      chips with no reload; unticking clears the date.
+- [ ] Outstanding = Σ amount of unpaid events for the selected year, and
+      switching year or filters recomputes all three chips consistently with
+      the visible rows.
+- [ ] Export contains `events`; re-importing a fresh export reproduces them
+      exactly; a v3 export without `events` still imports.
+- [ ] The events list has no horizontal scrollbar at 1280 / 1440 / 1920 /
+      2560 px, and no control overflows the event modal.
+
 - [ ] No PHP notices/warnings; no JS console errors on any Register page.
 - [ ] No plugin assets loaded on any non-plugin admin page or any front-end page.

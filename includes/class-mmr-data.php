@@ -848,4 +848,492 @@ class MMR_Data {
 		}
 		return $map;
 	}
+
+	/* ---------------------------------------------------------------------
+	 * Events — the receivables register
+	 *
+	 * A flat, chronological list of billing documents: what was issued, to
+	 * whom, for how much, and whether the money arrived. Amounts are
+	 * snapshots (see normalize_event) — they never re-derive from lessons.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * The fixed event type whitelist.
+	 *
+	 * @return string[]
+	 */
+	public static function event_types() {
+		return array( 'invoice', 'revolut', 'cash' );
+	}
+
+	/**
+	 * The list's status filter keys.
+	 *
+	 * @return string[]
+	 */
+	public static function event_states() {
+		return array( 'all', 'unpaid', 'paid', 'unsent', 'no_ksef' );
+	}
+
+	/**
+	 * Source kinds an event's amount may have been taken from.
+	 *
+	 * @return string[]
+	 */
+	public static function event_source_kinds() {
+		return array( 'class', 'student', 'company' );
+	}
+
+	/**
+	 * The single validator every write path runs through: the POST handler,
+	 * the AJAX flag toggle and the importer all call it, so their rules can
+	 * never drift apart.
+	 *
+	 * Enforced here, not in the UI:
+	 * - `ksef` is an invoice-only fact — any other type forces it to 0;
+	 * - a paid event always has a payment date (today when none is given);
+	 * - an unpaid event never has one.
+	 *
+	 * @param array $data Raw fields from any source.
+	 * @return array Normalised row ready for the database.
+	 */
+	public static function normalize_event( $data ) {
+		$type = isset( $data['type'] ) ? strtolower( trim( (string) $data['type'] ) ) : '';
+		if ( ! in_array( $type, self::event_types(), true ) ) {
+			$type = 'invoice';
+		}
+
+		$issue_date = isset( $data['issue_date'] ) ? trim( (string) $data['issue_date'] ) : '';
+		if ( ! mmr_valid_date( $issue_date ) ) {
+			$issue_date = current_time( 'Y-m-d' );
+		}
+
+		$paid = empty( $data['paid'] ) ? 0 : 1;
+		$paid_date = isset( $data['paid_date'] ) ? trim( (string) $data['paid_date'] ) : '';
+		if ( ! mmr_valid_date( $paid_date ) ) {
+			$paid_date = '';
+		}
+		if ( $paid ) {
+			if ( '' === $paid_date ) {
+				$paid_date = current_time( 'Y-m-d' );
+			}
+		} else {
+			// A payment date on an unpaid row is nonsense.
+			$paid_date = null;
+		}
+
+		$source_kind = isset( $data['source_kind'] ) ? strtolower( trim( (string) $data['source_kind'] ) ) : '';
+		if ( ! in_array( $source_kind, self::event_source_kinds(), true ) ) {
+			$source_kind = '';
+		}
+		$source_period = isset( $data['source_period'] ) ? mmr_sanitize_period( $data['source_period'] ) : null;
+		$source_id = isset( $data['source_id'] ) ? (int) $data['source_id'] : 0;
+		if ( '' === $source_kind ) {
+			$source_id = 0;
+			$source_period = null;
+		}
+
+		return array(
+			'type'          => $type,
+			'doc_number'    => isset( $data['doc_number'] ) ? sanitize_text_field( (string) $data['doc_number'] ) : '',
+			'issue_date'    => $issue_date,
+			'payer_label'   => isset( $data['payer_label'] ) ? sanitize_text_field( (string) $data['payer_label'] ) : '',
+			'amount'        => isset( $data['amount'] ) ? mmr_sanitize_money( $data['amount'] ) : 0.0,
+			'ksef'          => ( 'invoice' === $type && ! empty( $data['ksef'] ) ) ? 1 : 0,
+			'sent'          => empty( $data['sent'] ) ? 0 : 1,
+			'paid'          => $paid,
+			'paid_date'     => $paid_date,
+			'notes'         => isset( $data['notes'] ) ? sanitize_textarea_field( (string) $data['notes'] ) : '',
+			'source_kind'   => '' === $source_kind ? null : $source_kind,
+			'source_id'     => $source_id ? $source_id : null,
+			'source_period' => $source_period,
+		);
+	}
+
+	/**
+	 * Build the shared WHERE clause for the events list and its totals, so a
+	 * chip can never be scoped differently from the rows below it.
+	 *
+	 * @param array $args year, type, state, search.
+	 * @return array [ where sql, params ]
+	 */
+	protected static function event_where( $args ) {
+		global $wpdb;
+
+		$where = '1=1';
+		$params = array();
+
+		$year = isset( $args['year'] ) ? (int) $args['year'] : 0;
+		if ( $year > 0 ) {
+			$where .= ' AND YEAR(issue_date) = %d';
+			$params[] = $year;
+		}
+
+		$type = isset( $args['type'] ) ? (string) $args['type'] : '';
+		if ( in_array( $type, self::event_types(), true ) ) {
+			$where .= ' AND type = %s';
+			$params[] = $type;
+		}
+
+		$state = isset( $args['state'] ) ? (string) $args['state'] : 'all';
+		switch ( $state ) {
+			case 'unpaid':
+				$where .= ' AND paid = 0';
+				break;
+			case 'paid':
+				$where .= ' AND paid = 1';
+				break;
+			case 'unsent':
+				$where .= ' AND sent = 0';
+				break;
+			case 'no_ksef':
+				$where .= " AND type = 'invoice' AND ksef = 0";
+				break;
+		}
+
+		if ( ! empty( $args['search'] ) ) {
+			$like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
+			$where .= ' AND (payer_label LIKE %s OR doc_number LIKE %s)';
+			$params[] = $like;
+			$params[] = $like;
+		}
+
+		return array( $where, $params );
+	}
+
+	/**
+	 * Fetch events.
+	 *
+	 * @param array $args year, type, state, search, orderby, order.
+	 * @return array
+	 */
+	public static function events( $args = array() ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		list( $where, $params ) = self::event_where( $args );
+
+		// Newest first by default: the working end of this register is the
+		// recent unpaid rows.
+		$columns = array( 'issue_date', 'payer_label', 'amount' );
+		$orderby = isset( $args['orderby'] ) ? (string) $args['orderby'] : '';
+		if ( in_array( $orderby, $columns, true ) ) {
+			$order = ( isset( $args['order'] ) && 'asc' === strtolower( (string) $args['order'] ) ) ? 'ASC' : 'DESC';
+			$order_sql = $orderby . ' ' . $order . ', id DESC';
+		} else {
+			$order_sql = 'issue_date DESC, id DESC';
+		}
+
+		// $where carries placeholders only; $order_sql is built from the
+		// whitelist above.
+		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY {$order_sql}";
+		if ( $params ) {
+			$sql = $wpdb->prepare( $sql, $params ); // phpcs:ignore WordPress.DB.PreparedSQL
+		}
+		return $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+	}
+
+	/**
+	 * Single event.
+	 *
+	 * @param int $id Event ID.
+	 * @return object|null
+	 */
+	public static function event( $id ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+	}
+
+	/**
+	 * Insert / update an event. Every field passes through normalize_event().
+	 *
+	 * @param array $data Raw fields.
+	 * @param int   $id   Existing ID or 0.
+	 * @return int Event ID.
+	 */
+	public static function save_event( $data, $id = 0 ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		$now = current_time( 'mysql' );
+
+		$row = self::normalize_event( $data );
+		$row['updated_at'] = $now;
+		$formats = array( '%s', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%s' );
+
+		if ( $id ) {
+			$wpdb->update( $table, $row, array( 'id' => $id ), $formats, array( '%d' ) );
+			return $id;
+		}
+		$row['created_at'] = $now;
+		$formats[] = '%s';
+		$wpdb->insert( $table, $row, $formats );
+		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Delete an event. Unlike students and classes an event is a record of a
+	 * single document, and a wrong row must not linger inside a financial
+	 * total — so this is a real delete, not an archive.
+	 *
+	 * @param int $id Event ID.
+	 */
+	public static function delete_event( $id ) {
+		global $wpdb;
+		$wpdb->delete( MMR_DB::table( 'events' ), array( 'id' => $id ), array( '%d' ) );
+	}
+
+	/**
+	 * Flip one of the three inline flags, re-running the shared validator so
+	 * the ksef / paid_date rules apply exactly as they do on a form save.
+	 *
+	 * @param int    $id    Event ID.
+	 * @param string $flag  ksef|sent|paid.
+	 * @param int    $value 0|1.
+	 * @return object|null The updated row, or null when the event is unknown.
+	 */
+	public static function set_event_flag( $id, $flag, $value ) {
+		if ( ! in_array( $flag, array( 'ksef', 'sent', 'paid' ), true ) ) {
+			return null;
+		}
+		$event = self::event( $id );
+		if ( ! $event ) {
+			return null;
+		}
+		$data = (array) $event;
+		$data[ $flag ] = $value ? 1 : 0;
+		self::save_event( $data, (int) $event->id );
+		return self::event( $id );
+	}
+
+	/**
+	 * Issued / received / outstanding for a filter set, in one grouped query.
+	 *
+	 * @param array $args Same filter args as events().
+	 * @return array issued, received, outstanding.
+	 */
+	public static function event_totals( $args = array() ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		list( $where, $params ) = self::event_where( $args );
+
+		$sql = "SELECT paid, COALESCE(SUM(amount),0) AS total FROM {$table} WHERE {$where} GROUP BY paid";
+		if ( $params ) {
+			$sql = $wpdb->prepare( $sql, $params ); // phpcs:ignore WordPress.DB.PreparedSQL
+		}
+		$rows = $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		$received = 0.0;
+		$outstanding = 0.0;
+		foreach ( $rows as $row ) {
+			if ( (int) $row->paid ) {
+				$received += (float) $row->total;
+			} else {
+				$outstanding += (float) $row->total;
+			}
+		}
+		return array(
+			'issued'      => round( $received + $outstanding, 2 ),
+			'received'    => round( $received, 2 ),
+			'outstanding' => round( $outstanding, 2 ),
+		);
+	}
+
+	/**
+	 * Years that have at least one event, newest first.
+	 *
+	 * @return int[]
+	 */
+	public static function event_years() {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		$years = $wpdb->get_col( "SELECT DISTINCT YEAR(issue_date) FROM {$table} ORDER BY 1 DESC" ); // phpcs:ignore WordPress.DB.PreparedSQL
+		return array_map( 'intval', (array) $years );
+	}
+
+	/* --- Amount picker -------------------------------------------------- */
+
+	/**
+	 * Map a class settle_method onto an event type, case-insensitively.
+	 *
+	 * @param string $method Free-text settle method.
+	 * @return string invoice|revolut|cash, or '' when it does not map.
+	 */
+	protected static function event_type_hint( $method ) {
+		$method = strtolower( trim( (string) $method ) );
+		if ( '' === $method ) {
+			return '';
+		}
+		if ( false !== strpos( $method, 'invoice' ) ) {
+			return 'invoice';
+		}
+		if ( false !== strpos( $method, 'revolut' ) ) {
+			return 'revolut';
+		}
+		if ( false !== strpos( $method, 'cash' ) || false !== strpos( $method, 'gotówka' ) ) {
+			return 'cash';
+		}
+		return '';
+	}
+
+	/**
+	 * Events already recorded against a source for a period, keyed
+	 * `kind|id` — one query, so the picker can flag a possible double-bill.
+	 *
+	 * @param string $period Y-m.
+	 * @return array
+	 */
+	protected static function events_by_source( $period ) {
+		global $wpdb;
+		$table = MMR_DB::table( 'events' );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT source_kind, source_id, COALESCE(SUM(amount),0) AS total, MAX(issue_date) AS last_date
+			 FROM {$table}
+			 WHERE source_period = %s AND source_kind IS NOT NULL
+			 GROUP BY source_kind, source_id",
+			$period
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ $row->source_kind . '|' . (int) $row->source_id ] = $row;
+		}
+		return $map;
+	}
+
+	/**
+	 * Build one picker entry, attaching the already-billed hint when the same
+	 * source has already produced an event for the period.
+	 *
+	 * @param string $kind   class|student|company.
+	 * @param int    $id     Source ID.
+	 * @param string $label  Payer label.
+	 * @param float  $amount Suggested amount.
+	 * @param string $detail Human explanation of the figure.
+	 * @param string $hint   Type hint or ''.
+	 * @param array  $billed Map from events_by_source().
+	 * @return array
+	 */
+	protected static function event_suggestion( $kind, $id, $label, $amount, $detail, $hint, $billed ) {
+		$key = $kind . '|' . (int) $id;
+		$already = isset( $billed[ $key ] ) ? $billed[ $key ] : null;
+		return array(
+			'kind'           => $kind,
+			'id'             => (int) $id,
+			'label'          => $label,
+			'amount'         => round( (float) $amount, 2 ),
+			'amount_display' => mmr_money( $amount ),
+			'detail'         => $detail,
+			'type_hint'      => $hint,
+			'billed'         => (bool) $already,
+			// A hint, never a block: splitting one settlement across several
+			// documents is normal and must stay frictionless.
+			'billed_note'    => $already
+				? sprintf(
+					/* translators: 1: amount already billed, 2: date of the last event. */
+					__( 'already billed — %1$s on %2$s', 'mm-register' ),
+					mmr_money( $already->total ),
+					mmr_date_label( $already->last_date )
+				)
+				: '',
+		);
+	}
+
+	/**
+	 * Billing suggestions for a month, in three groups, so no number is ever
+	 * retyped from the Settlement page into an event.
+	 *
+	 * Reads MMR_Data::settlement() without altering it; company entries are
+	 * built by grouping that report's classes by their company name.
+	 *
+	 * @param string $period Y-m.
+	 * @return array classes, students, companies.
+	 */
+	public static function event_suggestions( $period ) {
+		$period = mmr_sanitize_period( $period );
+		$out = array( 'classes' => array(), 'students' => array(), 'companies' => array() );
+		if ( ! $period ) {
+			return $out;
+		}
+
+		$report = self::settlement( $period );
+		$billed = self::events_by_source( $period );
+
+		// Classes — the class is what gets invoiced, so lesson fees only.
+		$companies = array();
+		foreach ( $report['classes'] as $row ) {
+			$fee_parts = array();
+			foreach ( $row['fees_used'] as $fee => $count ) {
+				$fee_parts[] = mmr_money( $fee ) . ' ×' . $count;
+			}
+			$detail = sprintf(
+				/* translators: 1: lesson count, 2: rates used, e.g. "200,00 zł ×11". */
+				_n( '%1$s lesson · %2$s', '%1$s lessons · %2$s', (int) $row['lesson_count'], 'mm-register' ),
+				number_format_i18n( (int) $row['lesson_count'] ),
+				implode( ', ', $fee_parts )
+			);
+			$hint = self::event_type_hint( $row['settle_method'] );
+
+			if ( $row['class_total'] > 0 ) {
+				$out['classes'][] = self::event_suggestion( 'class', $row['class_id'], $row['class_name'], $row['class_total'], $detail, $hint, $billed );
+			}
+
+			$company = trim( (string) $row['company'] );
+			if ( '' === $company ) {
+				continue;
+			}
+			if ( ! isset( $companies[ $company ] ) ) {
+				$companies[ $company ] = array( 'total' => 0.0, 'classes' => array(), 'hints' => array() );
+			}
+			$companies[ $company ]['total'] += (float) $row['class_total'];
+			$companies[ $company ]['classes'][] = $row['class_name'] . ' (' . mmr_money( $row['class_total'] ) . ')';
+			$companies[ $company ]['hints'][ $hint ] = true;
+		}
+
+		// Students — lesson shares plus the TBT surcharge, added once a month.
+		foreach ( $report['students'] as $row ) {
+			if ( $row['to_bill'] <= 0 ) {
+				continue;
+			}
+			$detail = sprintf(
+				/* translators: 1: lesson count, 2: lesson total. */
+				_n( '%1$s lesson · %2$s', '%1$s lessons · %2$s', (int) $row['lessons'], 'mm-register' ),
+				number_format_i18n( (int) $row['lessons'] ),
+				mmr_money( $row['lesson_total'] )
+			);
+			if ( $row['tbt'] > 0 ) {
+				/* translators: %s: TBT monthly surcharge. */
+				$detail .= ' · ' . sprintf( __( 'TBT %s', 'mm-register' ), mmr_money( $row['tbt'] ) );
+			}
+			$out['students'][] = self::event_suggestion( 'student', $row['student_id'], $row['student_name'], $row['to_bill'], $detail, '', $billed );
+		}
+
+		// Companies — Σ of their classes this month. The detail names the
+		// classes rolled up, so a company suggestion is never an opaque number.
+		foreach ( $companies as $name => $data ) {
+			if ( $data['total'] <= 0 ) {
+				continue;
+			}
+			$company = self::company_by_name( $name );
+			// A type hint only survives when every rolled-up class agrees.
+			$hints = array_keys( $data['hints'] );
+			$hint = ( 1 === count( $hints ) && '' !== $hints[0] ) ? $hints[0] : '';
+			$out['companies'][] = self::event_suggestion(
+				'company',
+				$company ? (int) $company->id : 0,
+				$name,
+				$data['total'],
+				implode( ', ', $data['classes'] ),
+				$hint,
+				$billed
+			);
+		}
+
+		foreach ( $out as $group => $entries ) {
+			usort( $entries, function ( $a, $b ) {
+				return strcmp( $a['label'], $b['label'] );
+			} );
+			$out[ $group ] = $entries;
+		}
+		return $out;
+	}
 }
