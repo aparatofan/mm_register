@@ -15,18 +15,22 @@ The importer is:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "companies": [],
   "students": [],
   "classes": [],
-  "lessons": []
+  "lessons": [],
+  "events": []
 }
 ```
 
 Every top-level key is optional; a missing array is treated as empty. Order in
 the file does not matter — the importer resolves cross-references itself.
-Only companies, students, classes (with members) and lessons are imported; any
-other top-level keys are ignored.
+Only companies, students, classes (with members), lessons and events are
+imported; any other top-level keys are ignored.
+
+`events` arrived with **version 4** (plugin 2.5.0). A version 3 file, which has
+no `events` key, still imports exactly as before.
 
 ## References (`ref`)
 
@@ -140,6 +144,51 @@ One entry per booked lesson. **The fee printed in the sheet becomes
 Member share snapshots are computed at import time from the class members and
 `fee_snapshot`, so later membership changes never rewrite past months.
 
+## `events`
+
+One entry per document issued (Events page). Events reference nothing by `ref`
+— the payer is stored verbatim as text — so their entries are self-contained.
+
+| field | type | notes |
+|---|---|---|
+| `type` | `"invoice"` \| `"revolut"` \| `"cash"` | anything else becomes `invoice` |
+| `doc_number` | string | KSeF ID, `czekam na PO`, or empty |
+| `issue_date` | string | `YYYY-MM-DD`; an invalid or missing date becomes today |
+| `payer_label` | string | **required** — the "who"; an entry without one is skipped with a warning |
+| `amount` | number | snapshot of what was billed; never re-derived from lessons |
+| `ksef` | 0 \| 1 | **forced to 0 unless `type` is `invoice`** |
+| `sent` | 0 \| 1 | |
+| `paid` | 0 \| 1 | |
+| `paid_date` | string \| null | `YYYY-MM-DD`; defaults to today when `paid` is 1 and it is empty, and is cleared when `paid` is 0 |
+| `notes` | string | optional |
+| `source_kind` | `"class"` \| `"student"` \| `"company"` \| null | where the amount was taken from; anything else becomes null |
+| `source_id` | integer \| null | id of that class / student / company |
+| `source_period` | string \| null | `YYYY-MM` the suggestion came from |
+
+```json
+{
+  "type": "invoice",
+  "doc_number": "eFA/2026/07/03/8/KSeF",
+  "issue_date": "2026-07-03",
+  "payer_label": "AWP P&C S.A Oddział w Polsce",
+  "amount": 3612,
+  "ksef": 1, "sent": 1, "paid": 0,
+  "paid_date": null,
+  "notes": "NIP 525-000-00-00",
+  "source_kind": "company", "source_id": 3, "source_period": "2026-06"
+}
+```
+
+Every field goes through the same validator the Events form uses, so an import
+can never produce a row the UI would refuse — in particular a `revolut` or
+`cash` event with `ksef: 1`, or a payment date on an unpaid row.
+
+The `source_*` trio is imported as-is. Note that `source_id` refers to a
+database id, not an import `ref`: after importing into an empty install those
+ids are only meaningful if the classes/students/companies kept their original
+ids, so treat the trio as provenance metadata rather than a link. It only ever
+drives the picker's "already billed" hint.
+
 ---
 
 ## Export
@@ -154,3 +203,6 @@ be re-imported into an empty install and re-link correctly.
   the Settlement page for every imported month.
 - Because fees are snapshotted per lesson, changing a class fee afterwards must
   not alter past-month totals.
+- A fresh export re-imported into an empty install reproduces the events
+  exactly, and the Events page's Outstanding chip matches the source install's
+  for the same year.

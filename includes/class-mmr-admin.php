@@ -75,6 +75,11 @@ class MMR_Admin {
 	}
 
 	/** @return void */
+	public function render_events() {
+		$this->render( 'events.php' );
+	}
+
+	/** @return void */
 	public function render_students() {
 		$this->render( 'students.php' );
 	}
@@ -119,6 +124,8 @@ class MMR_Admin {
 			'quick_add_1on1'        => 'post_quick_add_1on1',
 			'save_company'          => 'post_save_company',
 			'toggle_company_status' => 'post_toggle_company_status',
+			'save_event'            => 'post_save_event',
+			'delete_event'          => 'post_delete_event',
 			'import_data'           => 'post_import_data',
 			'export_data'           => 'post_export_data',
 			'wipe_data'             => 'post_wipe_data',
@@ -190,13 +197,14 @@ class MMR_Admin {
 
 	/**
 	 * Collect the filter_* fields a row-action form echoes back, so the
-	 * redirect can restore the list view (search / status / type filter).
+	 * redirect can restore the list view (search / status / type filter on
+	 * students, classes and companies; year / type / state / sort on events).
 	 *
 	 * @return array
 	 */
 	protected function filter_args() {
 		$args = array();
-		foreach ( array( 's', 'status', 'client_type', 'company_id' ) as $key ) {
+		foreach ( array( 's', 'status', 'client_type', 'company_id', 'year', 'type', 'state', 'orderby', 'order' ) as $key ) {
 			$value = $this->text( 'filter_' . $key );
 			if ( '' !== $value ) {
 				$args[ $key ] = $value;
@@ -364,6 +372,46 @@ class MMR_Admin {
 			MMR_Data::set_company_status( $id, $status );
 		}
 		$this->redirect( 'companies', 'saved', $this->filter_args() );
+	}
+
+	/* --- Events -------------------------------------------------------- */
+
+	/**
+	 * Save an event. Field-level rules (type whitelist, invoice-only KSeF,
+	 * paid/paid_date coupling, source provenance) live in
+	 * MMR_Data::normalize_event(), which every write path shares.
+	 */
+	protected function post_save_event() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$payer_label = $this->text( 'payer_label' );
+		if ( '' === $payer_label ) {
+			$this->redirect( 'events', 'Who is required.', $this->filter_args(), true );
+		}
+		MMR_Data::save_event( array(
+			'type'          => $this->text( 'type' ),
+			'doc_number'    => $this->text( 'doc_number' ),
+			'issue_date'    => $this->text( 'issue_date' ),
+			'payer_label'   => $payer_label,
+			'amount'        => $this->money( 'amount' ),
+			'ksef'          => $this->bool( 'ksef' ),
+			'sent'          => $this->bool( 'sent' ),
+			'paid'          => $this->bool( 'paid' ),
+			'paid_date'     => $this->text( 'paid_date' ),
+			'notes'         => $this->textarea( 'notes' ),
+			'source_kind'   => $this->text( 'source_kind' ),
+			'source_id'     => isset( $_POST['source_id'] ) ? (int) $_POST['source_id'] : 0, // phpcs:ignore WordPress.Security.NonceVerification
+			'source_period' => $this->text( 'source_period' ),
+		), $id );
+		$this->redirect( 'events', 'saved', $this->filter_args() );
+	}
+
+	/** Delete an event — a real delete, see MMR_Data::delete_event(). */
+	protected function post_delete_event() {
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		if ( $id ) {
+			MMR_Data::delete_event( $id );
+		}
+		$this->redirect( 'events', 'deleted', $this->filter_args() );
 	}
 
 	/* --- Tools --------------------------------------------------------- */

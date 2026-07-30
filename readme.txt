@@ -3,13 +3,13 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.4.0
+Stable tag: 2.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Private back-office register for NET ENGLISH: weekly lesson calendar,
-students / classes / companies database and a computed monthly settlement
-report.
+students / classes / companies database, a computed monthly settlement
+report and a register of issued documents with paid/unpaid tracking.
 
 == Description ==
 
@@ -19,10 +19,18 @@ class name books a billable lesson, and a monthly settlement report — computed
 entirely from booked lessons and their fee snapshots — that says exactly what
 to bill each student, including TBT monthly surcharges and group splits.
 
+The Events page is the other half: a chronological register of the documents
+actually issued — invoice, revolut or cash — with KSEF, SENT and PAID ticks,
+a payment date and a running total of everything still outstanding. Amounts
+are taken from the computed settlement with one click and then frozen, so no
+figure is ever retyped and later lesson edits never rewrite an issued
+document.
+
 This is a single-user administrator tool. It produces no front-end output and
 loads its assets only on its own admin pages. It does not issue invoices
-(handled externally by the KSeF program) and does not track payments — it
-produces the per-student "to bill" numbers, with copy and CSV export.
+(handled externally by the KSeF program) — it produces the per-student "to
+bill" numbers, with copy and CSV export, and records what was issued against
+them.
 
 Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
 
@@ -35,6 +43,24 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.5.0 =
+* New Events page and mmr_events table (DB version 2.2): the receivables
+  register — a chronological list of issued documents (invoice / revolut /
+  cash) with document number, issue date, payer, amount, KSEF / SENT / PAID
+  ticks, payment date and notes. Year, type, status and search filters, with
+  Issued / Received / Outstanding chips scoped to the visible rows.
+* Events: KSEF, SENT and PAID are inline checkboxes — ticking PAID fills in
+  today's payment date and updates the totals without a page reload. KSEF
+  applies to invoices only, enforced server-side.
+* Events: "Take from settlement" fills Who, Amount and Type from the computed
+  monthly settlement — per class, per student (TBT included) or per company
+  (its classes summed and named) — so no number is retyped between pages. The
+  picker flags a suggestion that already produced an event for that month.
+* Amounts are snapshots: editing lessons in an already-billed month never
+  changes an existing event.
+* Import/export payload version 3 → 4, adding an "events" section. Older v3
+  exports still import unchanged.
 
 = 2.4.0 =
 * Settlement: added a filter box above the per-class table. Typing narrows the

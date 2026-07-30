@@ -182,6 +182,7 @@ class MMR_DB {
 		$members = self::table( 'class_members' );
 		$lessons = self::table( 'lessons' );
 		$companies = self::table( 'companies' );
+		$events = self::table( 'events' );
 
 		$sql = array();
 
@@ -256,6 +257,33 @@ class MMR_DB {
 			KEY date_slot (lesson_date, slot)
 		) {$charset_collate};";
 
+		// Events — the receivables register (v2.2). NOTE: this is deliberately
+		// NOT the v1 `mmr_settlements` table, which upgrade_legacy() still
+		// drops; `events` must never appear in legacy_keys().
+		$sql[] = "CREATE TABLE {$events} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			type VARCHAR(20) NOT NULL DEFAULT 'invoice',
+			doc_number VARCHAR(190) NULL DEFAULT NULL,
+			issue_date DATE NOT NULL,
+			payer_label VARCHAR(190) NOT NULL,
+			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+			ksef TINYINT(1) NOT NULL DEFAULT 0,
+			sent TINYINT(1) NOT NULL DEFAULT 0,
+			paid TINYINT(1) NOT NULL DEFAULT 0,
+			paid_date DATE NULL DEFAULT NULL,
+			notes TEXT NULL,
+			source_kind VARCHAR(10) NULL DEFAULT NULL,
+			source_id BIGINT UNSIGNED NULL DEFAULT NULL,
+			source_period CHAR(7) NULL DEFAULT NULL,
+			created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
+			updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			KEY issue_date (issue_date),
+			KEY paid (paid),
+			KEY type (type),
+			KEY source (source_kind, source_id)
+		) {$charset_collate};";
+
 		foreach ( $sql as $statement ) {
 			dbDelta( $statement );
 		}
@@ -275,11 +303,16 @@ class MMR_DB {
 			'class_members',
 			'lessons',
 			'companies',
+			'events',
 		);
 	}
 
 	/**
 	 * Logical keys of the v1 tables removed in v2.
+	 *
+	 * `settlements` here is the v1 Receivables table, unrelated to the v2.2
+	 * `events` table — never add `events` to this list, it is dropped on every
+	 * version bump.
 	 *
 	 * @return string[]
 	 */
@@ -313,7 +346,7 @@ class MMR_DB {
 	 */
 	public static function is_empty() {
 		global $wpdb;
-		foreach ( array( 'students', 'classes', 'class_members', 'lessons', 'companies' ) as $key ) {
+		foreach ( array( 'students', 'classes', 'class_members', 'lessons', 'companies', 'events' ) as $key ) {
 			$table = self::table( $key );
 			$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL
 			if ( $count > 0 ) {

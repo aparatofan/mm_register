@@ -74,7 +74,7 @@ class MMR_Plugin {
 	public function register_menu() {
 		$cap = MMR_CAP;
 
-		// Register keeps its own top-level menu (it is a six-page suite, not a
+		// Register keeps its own top-level menu (it is a seven-page suite, not a
 		// single screen). Position 3.1 places it immediately below the TBT hub
 		// menu, which sits at position 3.
 		$this->page_hooks['calendar'] = add_menu_page(
@@ -90,6 +90,7 @@ class MMR_Plugin {
 		$pages = array(
 			'calendar'   => __( 'Calendar', 'mm-register' ),
 			'settlement' => __( 'Settlement', 'mm-register' ),
+			'events'     => __( 'Events', 'mm-register' ),
 			'students'   => __( 'Students', 'mm-register' ),
 			'classes'    => __( 'Classes', 'mm-register' ),
 			'companies'  => __( 'Companies', 'mm-register' ),
@@ -99,6 +100,7 @@ class MMR_Plugin {
 		$callbacks = array(
 			'calendar'   => 'render_calendar',
 			'settlement' => 'render_settlement',
+			'events'     => 'render_events',
 			'students'   => 'render_students',
 			'classes'    => 'render_classes',
 			'companies'  => 'render_companies',
@@ -179,6 +181,13 @@ class MMR_Plugin {
 					/* translators: 1: matching class count, 2: total class count. */
 					'classesShown'  => __( 'Showing %1$s of %2$s classes', 'mm-register' ),
 					'filteredTotal' => __( 'Filtered total', 'mm-register' ),
+					'loading'       => __( 'Loading…', 'mm-register' ),
+					'use'           => __( 'Use', 'mm-register' ),
+					'suggestClasses'  => __( 'Classes', 'mm-register' ),
+					'suggestStudents' => __( 'Students', 'mm-register' ),
+					'suggestCompanies' => __( 'Companies', 'mm-register' ),
+					/* translators: %s: month name, e.g. "July 2026". */
+					'noSuggestions' => __( 'No lessons booked in %s.', 'mm-register' ),
 				),
 			)
 		);

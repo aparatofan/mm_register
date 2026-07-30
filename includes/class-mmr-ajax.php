@@ -24,6 +24,8 @@ class MMR_Ajax {
 			'mmr_update_lesson',
 			'mmr_delete_lesson',
 			'mmr_copy_week',
+			'mmr_event_suggestions',
+			'mmr_toggle_event_flag',
 		);
 		foreach ( $actions as $action ) {
 			add_action( 'wp_ajax_' . $action, array( $this, $action ) );
@@ -173,6 +175,77 @@ class MMR_Ajax {
 		wp_send_json_success( array( 'copied' => $copied, 'skipped' => $skipped ) );
 	}
 
+	/* ---------------------------------------------------------------------
+	 * Events
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Billing suggestions for a month, for the amount picker in the event
+	 * modal. Amounts arrive with their PHP-formatted display string so the JS
+	 * never formats money differently from the server.
+	 */
+	public function mmr_event_suggestions() {
+		$this->guard();
+		$period = isset( $_POST['period'] ) ? mmr_sanitize_period( sanitize_text_field( wp_unslash( $_POST['period'] ) ) ) : null;
+		if ( ! $period ) {
+			wp_send_json_error( array( 'message' => 'bad_request' ), 400 );
+		}
+		wp_send_json_success( array(
+			'period' => $period,
+			'label'  => mmr_period_label( $period ),
+			'groups' => MMR_Data::event_suggestions( $period ),
+		) );
+	}
+
+	/**
+	 * Flip one of the three inline flags on an event row. The ksef-only-for-
+	 * invoices and paid_date rules live in MMR_Data::normalize_event(), so a
+	 * crafted request cannot bypass them.
+	 */
+	public function mmr_toggle_event_flag() {
+		$this->guard();
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
+		$flag = isset( $_POST['flag'] ) ? sanitize_key( wp_unslash( $_POST['flag'] ) ) : '';
+		$value = ! empty( $_POST['value'] ) ? 1 : 0;
+
+		if ( ! $id || ! in_array( $flag, array( 'ksef', 'sent', 'paid' ), true ) ) {
+			wp_send_json_error( array( 'message' => 'bad_request' ), 400 );
+		}
+		$event = MMR_Data::set_event_flag( $id, $flag, $value );
+		if ( ! $event ) {
+			wp_send_json_error( array( 'message' => 'not_found' ), 404 );
+		}
+
+		// Recompute the chips for the view the row was toggled in.
+		$args = array(
+			'year'   => isset( $_POST['year'] ) ? (int) $_POST['year'] : 0,
+			'type'   => isset( $_POST['type'] ) ? sanitize_key( wp_unslash( $_POST['type'] ) ) : '',
+			'state'  => isset( $_POST['state'] ) ? sanitize_key( wp_unslash( $_POST['state'] ) ) : 'all',
+			'search' => isset( $_POST['search'] ) ? sanitize_text_field( wp_unslash( $_POST['search'] ) ) : '',
+		);
+		$totals = MMR_Data::event_totals( $args );
+
+		wp_send_json_success( array(
+			'event'  => array(
+				'id'                => (int) $event->id,
+				'type'              => $event->type,
+				'ksef'              => (int) $event->ksef,
+				'sent'              => (int) $event->sent,
+				'paid'              => (int) $event->paid,
+				'paid_date'         => (string) $event->paid_date,
+				'paid_date_display' => mmr_date_label( $event->paid_date ),
+			),
+			'totals' => array(
+				'issued'              => $totals['issued'],
+				'issued_display'      => mmr_money( $totals['issued'] ),
+				'received'            => $totals['received'],
+				'received_display'    => mmr_money( $totals['received'] ),
+				'outstanding'         => $totals['outstanding'],
+				'outstanding_display' => mmr_money( $totals['outstanding'] ),
+			),
+		) );
+	}
+
 	/**
 	 * Validate a Y-m-d date string.
 	 *
@@ -180,11 +253,7 @@ class MMR_Ajax {
 	 * @return bool
 	 */
 	protected function valid_date( $date ) {
-		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', (string) $date ) ) {
-			return false;
-		}
-		$parts = explode( '-', $date );
-		return checkdate( (int) $parts[1], (int) $parts[2], (int) $parts[0] );
+		return mmr_valid_date( $date );
 	}
 
 	/**

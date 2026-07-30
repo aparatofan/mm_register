@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       TBT Register
  * Plugin URI:        https://mariuszmirecki.pl/
- * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students / classes / companies database and a computed monthly settlement report. No front-end output.
- * Version:           2.4.0
+ * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students / classes / companies database, a computed monthly settlement report and a register of issued documents with paid/unpaid tracking. No front-end output.
+ * Version:           2.5.0
  * Requires at least: 6.0
  * Requires PHP:      8.1
  * Author:            Mariusz Mirecki
@@ -50,10 +50,10 @@ if ( ! function_exists( 'tbt_is_owner' ) ) {
 	}
 }
 
-define( 'MMR_VERSION', '2.4.0' );
+define( 'MMR_VERSION', '2.5.0' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
-define( 'MMR_DB_VERSION', '2.1' );
+define( 'MMR_DB_VERSION', '2.2' );
 define( 'MMR_FILE', __FILE__ );
 define( 'MMR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MMR_URL', plugin_dir_url( __FILE__ ) );
@@ -119,7 +119,7 @@ function mmr_register_hub_item( $items ) {
 	$items[] = array(
 		'slug'        => 'mmr-calendar',
 		'title'       => 'TBT Register',
-		'description' => 'Private owner-only back-office: weekly lesson calendar, students/classes/companies database, and monthly settlement reports.',
+		'description' => 'Private owner-only back-office: weekly lesson calendar, students/classes/companies database, monthly settlement reports and a register of issued documents with paid/unpaid tracking.',
 		'capability'  => 'tbt_owner',
 	);
 	return $items;
