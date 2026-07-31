@@ -146,15 +146,22 @@ Member share snapshots are computed at import time from the class members and
 
 ## `events`
 
-One entry per document issued (Events page). Events reference nothing by `ref`
-— the payer is stored verbatim as text — so their entries are self-contained.
+One entry per document issued (Events page), with every class it bills listed
+in `class_refs` — one row per event, never one row per class.
+
+The "who" is a set of class references plus an optional free-text remainder;
+`payer_label` is the readable snapshot composed from the two. An entry needs
+at least one of `class_refs`, `who_text` or `payer_label`, or it is skipped
+with a warning.
 
 | field | type | notes |
 |---|---|---|
-| `type` | `"invoice"` \| `"revolut"` \| `"cash"` | anything else becomes `invoice` |
+| `type` | `"invoice"` \| `"revolut"` \| `"cash"` | **ignored when it can be derived** — see below; anything else becomes `invoice` |
 | `doc_number` | string | KSeF ID, `czekam na PO`, or empty |
 | `issue_date` | string | `YYYY-MM-DD`; an invalid or missing date becomes today |
-| `payer_label` | string | **required** — the "who"; an entry without one is skipped with a warning |
+| `class_refs` | string[] | class `ref`s this document bills; refs that match no class are dropped |
+| `who_text` | string | the free-text remainder — a payer with no class on record |
+| `payer_label` | string | the readable "who". **Written by the importer**, composed from the resolved classes and `who_text`. Supplied on its own (a pre-2.3 export) it is imported verbatim as `who_text` — an old string is never guessed back into a class |
 | `amount` | number | snapshot of what was billed; never re-derived from lessons |
 | `ksef` | 0 \| 1 | **forced to 0 unless `type` is `invoice`** |
 | `sent` | 0 \| 1 | |
@@ -170,7 +177,9 @@ One entry per document issued (Events page). Events reference nothing by `ref`
   "type": "invoice",
   "doc_number": "eFA/2026/07/03/8/KSeF",
   "issue_date": "2026-07-03",
-  "payer_label": "AWP P&C S.A Oddział w Polsce",
+  "class_refs": [ "c_awp_a", "c_awp_b" ],
+  "who_text": "",
+  "payer_label": "AWP Group A, AWP Group B",
   "amount": 3612,
   "ksef": 1, "sent": 1, "paid": 0,
   "paid_date": null,
@@ -182,6 +191,12 @@ One entry per document issued (Events page). Events reference nothing by `ref`
 Every field goes through the same validator the Events form uses, so an import
 can never produce a row the UI would refuse — in particular a `revolut` or
 `cash` event with `ksef: 1`, or a payment date on an unpaid row.
+
+`type` is derived, not read, whenever the referenced classes agree: when every
+class in `class_refs` has a `settle_method` mapping to the same event type,
+that type wins over whatever the entry supplies. A supplied `type` is used only
+when derivation cannot succeed — classes that settle differently, a class with
+no settle method, or no `class_refs` at all.
 
 The `source_*` trio is imported as-is. Note that `source_id` refers to a
 database id, not an import `ref`: after importing into an empty install those

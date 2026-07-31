@@ -127,7 +127,8 @@ class MMR_Data {
 	/**
 	 * Fetch classes.
 	 *
-	 * @param array $args status, search, client_type, company_id.
+	 * @param array $args status, search, client_type, company_id, orderby
+	 *                   ('status' puts active classes before archived ones).
 	 * @return array
 	 */
 	public static function classes( $args = array() ) {
@@ -154,7 +155,13 @@ class MMR_Data {
 			$params[] = (int) $args['company_id'];
 		}
 
-		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY name ASC";
+		// 'active' sorts before 'archived', so the enum's own order is the one
+		// the picker wants: still-running classes first, history below.
+		$order_sql = ( isset( $args['orderby'] ) && 'status' === $args['orderby'] )
+			? 'status ASC, name ASC'
+			: 'name ASC';
+
+		$sql = "SELECT * FROM {$table} WHERE {$where} ORDER BY {$order_sql}";
 		if ( $params ) {
 			$sql = $wpdb->prepare( $sql, $params ); // phpcs:ignore WordPress.DB.PreparedSQL
 		}
@@ -188,6 +195,31 @@ class MMR_Data {
 		// Column name comes from the whitelist above; safe to interpolate.
 		$rows = $wpdb->get_col( "SELECT DISTINCT {$field} FROM {$table} WHERE {$field} IS NOT NULL AND {$field} <> '' ORDER BY {$field} ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL
 		return array_filter( (array) $rows );
+	}
+
+	/**
+	 * Fetch class rows keyed by ID, in one query.
+	 *
+	 * Any status: an event may legitimately be raised against an archived
+	 * class, and a historical event must stay editable.
+	 *
+	 * @param int[] $ids Class IDs.
+	 * @return array id => row object.
+	 */
+	public static function classes_by_ids( $ids ) {
+		global $wpdb;
+		$ids = array_values( array_unique( array_filter( array_map( 'absint', (array) $ids ) ) ) );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$table = MMR_DB::table( 'classes' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE id IN ({$placeholders})", $ids ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ (int) $row->id ] = $row;
+		}
+		return $map;
 	}
 
 	/**
@@ -884,10 +916,226 @@ class MMR_Data {
 		return array( 'class', 'student', 'company' );
 	}
 
+	/* --- Who: classes + free text -------------------------------------- */
+
+	/**
+	 * Class IDs an event was raised for, in class-name order.
+	 *
+	 * @param int $event_id Event ID.
+	 * @return int[]
+	 */
+	public static function event_class_ids( $event_id ) {
+		global $wpdb;
+		$ec = MMR_DB::table( 'event_classes' );
+		$c = MMR_DB::table( 'classes' );
+		$ids = $wpdb->get_col( $wpdb->prepare(
+			"SELECT ec.class_id FROM {$ec} ec JOIN {$c} c ON c.id = ec.class_id WHERE ec.event_id = %d ORDER BY c.name ASC",
+			$event_id
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		return array_map( 'intval', (array) $ids );
+	}
+
+	/**
+	 * Classes of many events at once, so a list screen never runs one query
+	 * per row.
+	 *
+	 * @param int[] $event_ids Event IDs.
+	 * @return array event_id => list of [ id, name, settle_method, company ].
+	 */
+	public static function event_classes_map( $event_ids ) {
+		global $wpdb;
+		$event_ids = array_values( array_unique( array_filter( array_map( 'absint', (array) $event_ids ) ) ) );
+		if ( empty( $event_ids ) ) {
+			return array();
+		}
+		$ec = MMR_DB::table( 'event_classes' );
+		$c = MMR_DB::table( 'classes' );
+		$co = MMR_DB::table( 'companies' );
+		$placeholders = implode( ',', array_fill( 0, count( $event_ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT ec.event_id, c.id, c.name, c.settle_method, co.name AS company
+			 FROM {$ec} ec
+			 JOIN {$c} c ON c.id = ec.class_id
+			 LEFT JOIN {$co} co ON co.id = c.company_id
+			 WHERE ec.event_id IN ({$placeholders})
+			 ORDER BY c.name ASC",
+			$event_ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ (int) $row->event_id ][] = self::class_ref_payload( $row );
+		}
+		return $map;
+	}
+
+	/**
+	 * Shape one class as the form and the picker consume it: the name to show,
+	 * the company to disambiguate it, and the settle method behind the derived
+	 * type — so the user can always see why Type resolved as it did.
+	 *
+	 * @param object $class Class row (needs id, name, settle_method, and either
+	 *                      a company alias or company_id).
+	 * @return array
+	 */
+	public static function class_ref_payload( $class ) {
+		$company = '';
+		if ( isset( $class->company ) ) {
+			$company = (string) $class->company;
+		} elseif ( ! empty( $class->company_id ) ) {
+			$row = self::company( (int) $class->company_id );
+			$company = $row ? $row->name : '';
+		}
+		return array(
+			'id'            => (int) $class->id,
+			'name'          => (string) $class->name,
+			'company'       => $company,
+			'settle_method' => (string) $class->settle_method,
+			'type_hint'     => self::event_type_hint( $class->settle_method ),
+			'status'        => isset( $class->status ) ? (string) $class->status : '',
+		);
+	}
+
+	/**
+	 * Replace the class set of an event.
+	 *
+	 * @param int   $event_id  Event ID.
+	 * @param int[] $class_ids Verified class IDs.
+	 */
+	public static function set_event_classes( $event_id, $class_ids ) {
+		global $wpdb;
+		$ec = MMR_DB::table( 'event_classes' );
+		$wpdb->delete( $ec, array( 'event_id' => $event_id ), array( '%d' ) );
+		foreach ( array_unique( array_map( 'absint', (array) $class_ids ) ) as $class_id ) {
+			if ( ! $class_id ) {
+				continue;
+			}
+			$wpdb->insert( $ec, array( 'event_id' => $event_id, 'class_id' => $class_id ), array( '%d', '%d' ) );
+		}
+	}
+
+	/**
+	 * Derive the event type from the settle methods of the selected classes.
+	 *
+	 * Resolution succeeds only when every selected class maps to the same
+	 * event type. Anything else is reported as unresolved with the offending
+	 * class names, so the form can say what is wrong instead of guessing —
+	 * a wrong type on a financial record is worse than one extra click.
+	 *
+	 * @param int[] $class_ids Class IDs.
+	 * @param array $map       Optional id => class row map, to save a query.
+	 * @return array {
+	 *     type     => resolved event type, '' when unresolved,
+	 *     resolved => bool,
+	 *     reason   => ok|none|mixed|unmapped,
+	 *     classes  => names behind the reason (conflicting or unmapped),
+	 * }
+	 */
+	public static function derive_event_type( $class_ids, $map = null ) {
+		$class_ids = array_values( array_unique( array_filter( array_map( 'absint', (array) $class_ids ) ) ) );
+		if ( empty( $class_ids ) ) {
+			return array( 'type' => '', 'resolved' => false, 'reason' => 'none', 'classes' => array() );
+		}
+		if ( null === $map ) {
+			$map = self::classes_by_ids( $class_ids );
+		}
+
+		$hints = array();
+		$unmapped = array();
+		foreach ( $class_ids as $class_id ) {
+			if ( ! isset( $map[ $class_id ] ) ) {
+				continue;
+			}
+			$class = $map[ $class_id ];
+			$hint = self::event_type_hint( $class->settle_method );
+			if ( '' === $hint ) {
+				$unmapped[] = $class->name;
+				continue;
+			}
+			$hints[ $hint ][] = $class->name;
+		}
+
+		if ( $unmapped ) {
+			return array( 'type' => '', 'resolved' => false, 'reason' => 'unmapped', 'classes' => $unmapped );
+		}
+		if ( count( $hints ) > 1 ) {
+			$conflicting = array();
+			foreach ( $hints as $names ) {
+				$conflicting = array_merge( $conflicting, $names );
+			}
+			return array( 'type' => '', 'resolved' => false, 'reason' => 'mixed', 'classes' => $conflicting );
+		}
+		if ( 1 === count( $hints ) ) {
+			$type = key( $hints );
+			return array( 'type' => $type, 'resolved' => true, 'reason' => 'ok', 'classes' => array() );
+		}
+		return array( 'type' => '', 'resolved' => false, 'reason' => 'none', 'classes' => array() );
+	}
+
+	/**
+	 * The readable "who" written to `payer_label`: every selected class, then
+	 * the free-text remainder. Kept because the whole register — search, sort,
+	 * export, the list column — reads that one column, and a snapshot records
+	 * who was billed rather than who the class is called today.
+	 *
+	 * @param string[] $names    Class names.
+	 * @param string   $who_text Free-text remainder.
+	 * @return string
+	 */
+	public static function compose_payer_label( $names, $who_text ) {
+		$parts = array_filter( array_map( 'trim', (array) $names ) );
+		$who_text = trim( (string) $who_text );
+		if ( '' !== $who_text ) {
+			$parts[] = $who_text;
+		}
+		$label = implode( ', ', $parts );
+		// The column is VARCHAR(190); truncate rather than let MySQL do it.
+		return ( function_exists( 'mb_substr' ) && mb_strlen( $label ) > 190 ) ? mb_substr( $label, 0, 190 ) : $label;
+	}
+
+	/**
+	 * Turn posted class references into the fields the validator stores.
+	 *
+	 * Orphan IDs are discarded, never saved. Where derivation succeeds the
+	 * resolved type replaces whatever the client posted — the client value is
+	 * a display convenience, not an input.
+	 *
+	 * @param array $data Raw fields including `class_ids` and `who_text`.
+	 * @return array Same data with class_ids verified, payer_label composed and
+	 *               type overwritten when it could be derived.
+	 */
+	public static function resolve_event_who( $data ) {
+		$ids = array_values( array_unique( array_filter( array_map( 'absint', (array) $data['class_ids'] ) ) ) );
+		$map = self::classes_by_ids( $ids );
+
+		$verified = array();
+		$names = array();
+		foreach ( $ids as $id ) {
+			if ( ! isset( $map[ $id ] ) ) {
+				continue; // Unknown class — drop it rather than store a dangling ID.
+			}
+			$verified[] = $id;
+			$names[] = $map[ $id ]->name;
+		}
+
+		$data['class_ids'] = $verified;
+		$data['payer_label'] = self::compose_payer_label( $names, isset( $data['who_text'] ) ? $data['who_text'] : '' );
+
+		$derived = self::derive_event_type( $verified, $map );
+		if ( $derived['resolved'] ) {
+			$data['type'] = $derived['type'];
+		}
+		return $data;
+	}
+
 	/**
 	 * The single validator every write path runs through: the POST handler,
 	 * the AJAX flag toggle and the importer all call it, so their rules can
 	 * never drift apart.
+	 *
+	 * Who and type are resolved before this runs (see resolve_event_who(),
+	 * called by save_event whenever the caller passes class references), so
+	 * everything below sees an already-derived `type` and `payer_label`.
 	 *
 	 * Enforced here, not in the UI:
 	 * - `ksef` is an invoice-only fact — any other type forces it to 0;
@@ -938,6 +1186,7 @@ class MMR_Data {
 			'doc_number'    => isset( $data['doc_number'] ) ? sanitize_text_field( (string) $data['doc_number'] ) : '',
 			'issue_date'    => $issue_date,
 			'payer_label'   => isset( $data['payer_label'] ) ? sanitize_text_field( (string) $data['payer_label'] ) : '',
+			'who_text'      => isset( $data['who_text'] ) ? sanitize_text_field( (string) $data['who_text'] ) : '',
 			'amount'        => isset( $data['amount'] ) ? mmr_sanitize_money( $data['amount'] ) : 0.0,
 			'ksef'          => ( 'invoice' === $type && ! empty( $data['ksef'] ) ) ? 1 : 0,
 			'sent'          => empty( $data['sent'] ) ? 0 : 1,
@@ -993,7 +1242,14 @@ class MMR_Data {
 
 		if ( ! empty( $args['search'] ) ) {
 			$like = '%' . $wpdb->esc_like( $args['search'] ) . '%';
-			$where .= ' AND (payer_label LIKE %s OR doc_number LIKE %s)';
+			// The label is a snapshot, so a class renamed after the document
+			// was issued would stop matching: the third clause matches an
+			// event when ANY of its classes matches under its current name.
+			$ec = MMR_DB::table( 'event_classes' );
+			$c = MMR_DB::table( 'classes' );
+			$where .= " AND (payer_label LIKE %s OR doc_number LIKE %s"
+				. " OR id IN (SELECT ec.event_id FROM {$ec} ec JOIN {$c} c ON c.id = ec.class_id WHERE c.name LIKE %s))";
+			$params[] = $like;
 			$params[] = $like;
 			$params[] = $like;
 		}
@@ -1047,6 +1303,11 @@ class MMR_Data {
 	/**
 	 * Insert / update an event. Every field passes through normalize_event().
 	 *
+	 * Pass `class_ids` to set the event's classes; the label and the type are
+	 * then derived from them and the link rows rewritten. Omit the key
+	 * entirely — as the flag toggle does, replaying a stored row — and the
+	 * existing classes are left exactly as they are.
+	 *
 	 * @param array $data Raw fields.
 	 * @param int   $id   Existing ID or 0.
 	 * @return int Event ID.
@@ -1056,18 +1317,29 @@ class MMR_Data {
 		$table = MMR_DB::table( 'events' );
 		$now = current_time( 'mysql' );
 
+		$class_ids = null;
+		if ( isset( $data['class_ids'] ) ) {
+			$data = self::resolve_event_who( $data );
+			$class_ids = $data['class_ids'];
+		}
+
 		$row = self::normalize_event( $data );
 		$row['updated_at'] = $now;
-		$formats = array( '%s', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%s' );
+		$formats = array( '%s', '%s', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%s' );
 
 		if ( $id ) {
 			$wpdb->update( $table, $row, array( 'id' => $id ), $formats, array( '%d' ) );
-			return $id;
+		} else {
+			$row['created_at'] = $now;
+			$formats[] = '%s';
+			$wpdb->insert( $table, $row, $formats );
+			$id = (int) $wpdb->insert_id;
 		}
-		$row['created_at'] = $now;
-		$formats[] = '%s';
-		$wpdb->insert( $table, $row, $formats );
-		return (int) $wpdb->insert_id;
+
+		if ( null !== $class_ids && $id ) {
+			self::set_event_classes( $id, $class_ids );
+		}
+		return $id;
 	}
 
 	/**
@@ -1079,6 +1351,7 @@ class MMR_Data {
 	 */
 	public static function delete_event( $id ) {
 		global $wpdb;
+		$wpdb->delete( MMR_DB::table( 'event_classes' ), array( 'event_id' => $id ), array( '%d' ) );
 		$wpdb->delete( MMR_DB::table( 'events' ), array( 'id' => $id ), array( '%d' ) );
 	}
 
@@ -1154,11 +1427,14 @@ class MMR_Data {
 
 	/**
 	 * Map a class settle_method onto an event type, case-insensitively.
+	 * `settle_method` is free text with a datalist, not an enum, so this is
+	 * the one place that decides what a method means — the Who field's type
+	 * derivation and the amount picker both go through it.
 	 *
 	 * @param string $method Free-text settle method.
 	 * @return string invoice|revolut|cash, or '' when it does not map.
 	 */
-	protected static function event_type_hint( $method ) {
+	public static function event_type_hint( $method ) {
 		$method = strtolower( trim( (string) $method ) );
 		if ( '' === $method ) {
 			return '';
@@ -1211,9 +1487,10 @@ class MMR_Data {
 	 * @param string $detail Human explanation of the figure.
 	 * @param string $hint   Type hint or ''.
 	 * @param array  $billed Map from events_by_source().
+	 * @param string $method Settle method behind the hint, for the class chip.
 	 * @return array
 	 */
-	protected static function event_suggestion( $kind, $id, $label, $amount, $detail, $hint, $billed ) {
+	protected static function event_suggestion( $kind, $id, $label, $amount, $detail, $hint, $billed, $method = '' ) {
 		$key = $kind . '|' . (int) $id;
 		$already = isset( $billed[ $key ] ) ? $billed[ $key ] : null;
 		return array(
@@ -1224,6 +1501,7 @@ class MMR_Data {
 			'amount_display' => mmr_money( $amount ),
 			'detail'         => $detail,
 			'type_hint'      => $hint,
+			'settle_method'  => (string) $method,
 			'billed'         => (bool) $already,
 			// A hint, never a block: splitting one settlement across several
 			// documents is normal and must stay frictionless.
@@ -1274,7 +1552,7 @@ class MMR_Data {
 			$hint = self::event_type_hint( $row['settle_method'] );
 
 			if ( $row['class_total'] > 0 ) {
-				$out['classes'][] = self::event_suggestion( 'class', $row['class_id'], $row['class_name'], $row['class_total'], $detail, $hint, $billed );
+				$out['classes'][] = self::event_suggestion( 'class', $row['class_id'], $row['class_name'], $row['class_total'], $detail, $hint, $billed, (string) $row['settle_method'] );
 			}
 
 			$company = trim( (string) $row['company'] );

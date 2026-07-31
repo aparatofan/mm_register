@@ -57,6 +57,10 @@ $query_args = array(
 $events = MMR_Data::events( $query_args );
 $totals = MMR_Data::event_totals( $query_args );
 
+// Classes of every listed event, in one query — the edit modal restores the
+// exact chip selection from this, and legacy rows simply have none.
+$event_classes = MMR_Data::event_classes_map( wp_list_pluck( $events, 'id' ) );
+
 $type_labels = array(
 	'invoice' => __( 'invoice', 'mm-register' ),
 	'revolut' => __( 'revolut', 'mm-register' ),
@@ -216,12 +220,22 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 			<?php foreach ( $events as $event ) :
 				$is_invoice = ( 'invoice' === $event->type );
 				$is_paid = (bool) $event->paid;
+				$classes_of_event = isset( $event_classes[ (int) $event->id ] ) ? $event_classes[ (int) $event->id ] : array();
+				// A pre-2.3 event has no classes and no free-text field — its
+				// whole "who" is the label. Show that label in the free-text
+				// box so it survives a re-save verbatim; never guess which
+				// class an old string meant.
+				$who_text = (string) $event->who_text;
+				if ( '' === $who_text && empty( $classes_of_event ) ) {
+					$who_text = (string) $event->payer_label;
+				}
 				$json = wp_json_encode( array(
 					'id'            => (int) $event->id,
 					'type'          => $event->type,
 					'doc_number'    => $event->doc_number,
 					'issue_date'    => $event->issue_date,
-					'payer_label'   => $event->payer_label,
+					'classes'       => $classes_of_event,
+					'who_text'      => $who_text,
 					'amount'        => $event->amount,
 					'ksef'          => (int) $event->ksef,
 					'sent'          => (int) $event->sent,
@@ -297,26 +311,44 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 						<input type="hidden" name="filter_<?php echo esc_attr( $fk ); ?>" value="<?php echo esc_attr( $fv ); ?>">
 					<?php endforeach; ?>
 					<div class="mmr-form-grid">
-						<div class="mmr-field">
+						<?php /* Who is the entry point of this form: the classes billed by
+						   this document, taken from the register itself, plus a free-text
+						   escape hatch for a payer that has no class on record. Type is
+						   derived from what is picked here. */ ?>
+						<div class="mmr-field mmr-field--full mmr-who" id="mmr-event-who">
+							<label for="mmr-event-who-search"><?php esc_html_e( 'Who', 'mm-register' ); ?> *</label>
+							<div class="mmr-chips" id="mmr-event-chips"></div>
+							<div class="mmr-who-picker">
+								<input type="search" id="mmr-event-who-search" class="mmr-who-search" autocomplete="off"
+									placeholder="<?php esc_attr_e( 'Search classes…', 'mm-register' ); ?>"
+									aria-describedby="mmr-event-who-hint">
+								<div class="mmr-who-results" id="mmr-event-who-results" hidden></div>
+							</div>
+							<p class="mmr-muted mmr-small" id="mmr-event-who-hint"><?php esc_html_e( 'Pick one or more classes. Archived classes are listed too, so past documents can still be recorded.', 'mm-register' ); ?></p>
+							<label class="mmr-who-text-label" for="mmr-event-who-text"><?php esc_html_e( 'Other payer (free text)', 'mm-register' ); ?></label>
+							<input type="text" id="mmr-event-who-text" name="who_text" data-field="who_text"
+								placeholder="<?php esc_attr_e( 'Someone with no class on record', 'mm-register' ); ?>">
+						</div>
+						<?php /* Derived, not chosen: the selector only appears when the
+						   settle methods cannot agree on one answer. */ ?>
+						<div class="mmr-field" id="mmr-event-type-wrap">
 							<label for="mmr-event-type-field"><?php esc_html_e( 'Type', 'mm-register' ); ?></label>
-							<select id="mmr-event-type-field" name="type" data-field="type">
+							<p class="mmr-derived" id="mmr-event-type-derived" role="status" aria-live="polite"></p>
+							<select id="mmr-event-type-field" name="type" data-field="type" hidden>
 								<?php foreach ( $types as $t ) : ?>
 									<option value="<?php echo esc_attr( $t ); ?>"><?php echo esc_html( $type_labels[ $t ] ); ?></option>
 								<?php endforeach; ?>
 							</select>
+							<p class="mmr-who-warning" id="mmr-event-type-note" hidden></p>
 						</div>
 						<div class="mmr-field">
 							<label for="mmr-event-issue-date"><?php esc_html_e( 'Issue date', 'mm-register' ); ?></label>
 							<input type="date" id="mmr-event-issue-date" name="issue_date" data-field="issue_date" value="<?php echo esc_attr( $today ); ?>">
 						</div>
 						<div class="mmr-field">
-							<label for="mmr-event-payer"><?php esc_html_e( 'Who', 'mm-register' ); ?> *</label>
-							<input type="text" id="mmr-event-payer" name="payer_label" data-field="payer_label" required>
-							<button type="button" class="button button-small mmr-field-action" id="mmr-take-settlement"><?php esc_html_e( 'Take from settlement', 'mm-register' ); ?></button>
-						</div>
-						<div class="mmr-field">
 							<label for="mmr-event-amount"><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></label>
 							<input type="text" id="mmr-event-amount" name="amount" data-field="amount" inputmode="decimal">
+							<button type="button" class="button button-small mmr-field-action" id="mmr-take-settlement"><?php esc_html_e( 'Take amount from settlement', 'mm-register' ); ?></button>
 						</div>
 						<div class="mmr-field">
 							<label for="mmr-event-doc"><?php esc_html_e( 'Document number', 'mm-register' ); ?></label>
@@ -332,7 +364,6 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 							<label class="mmr-check"><input type="checkbox" name="sent" value="1" data-field="sent"> <?php esc_html_e( 'SENT', 'mm-register' ); ?></label>
 							<label class="mmr-check"><input type="checkbox" name="paid" value="1" data-field="paid" id="mmr-event-paid"> <?php esc_html_e( 'PAID', 'mm-register' ); ?></label>
 						</div>
-						<div class="mmr-field" aria-hidden="true"></div>
 						<div class="mmr-field mmr-field--full">
 							<label for="mmr-event-notes"><?php esc_html_e( 'Notes', 'mm-register' ); ?></label>
 							<textarea id="mmr-event-notes" name="notes" data-field="notes" rows="3" placeholder="<?php esc_attr_e( 'NIP, address, “for the whole course — January–June”…', 'mm-register' ); ?>"></textarea>

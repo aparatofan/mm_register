@@ -208,6 +208,77 @@
 .mmr-form-grid .mmr-field--checks input[type="checkbox"] { width: auto; }
 .mmr-field-action { align-self: flex-start; }
 
+/* Who — the event form's first field: class chips plus a search list. */
+.mmr-who .mmr-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mmr-who .mmr-chips:empty { display: none; }
+.mmr-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	padding: 3px 4px 3px 8px;
+	border: 1px solid var(--mmr-border-strong);
+	border-radius: 999px;
+	background: var(--mmr-accent-soft);
+	font-size: 12px;
+}
+.mmr-chip-name { font-weight: 600; overflow-wrap: anywhere; }
+.mmr-chip-meta { color: var(--mmr-muted); }
+/* The settle method rides along, so it is always visible why Type resolved
+   the way it did. */
+.mmr-chip-badge {
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: #fff;
+	border: 1px solid var(--mmr-border);
+	font-size: 11px;
+	white-space: nowrap;
+}
+.mmr-chip-badge--none { color: var(--mmr-neg); border-color: var(--mmr-neg); }
+.mmr-chip-remove {
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+	font-size: 15px;
+	line-height: 1;
+	padding: 0 4px;
+	color: var(--mmr-muted);
+}
+.mmr-chip-remove:hover { color: var(--mmr-neg); }
+
+.mmr-who-picker { position: relative; }
+.mmr-who .mmr-who-search { width: 100%; }
+.mmr-who-results {
+	position: absolute;
+	z-index: 5;
+	left: 0;
+	right: 0;
+	max-height: 240px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid var(--mmr-border-strong);
+	border-radius: 6px;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+}
+.mmr-who-results[hidden] { display: none; }
+.mmr-who-results .mmr-picker-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+.mmr-who-results .mmr-pi-text { display: flex; flex-direction: column; min-width: 0; }
+.mmr-who-results .mmr-pi-meta { font-size: 11px; color: var(--mmr-muted); }
+.mmr-who .mmr-who-text-label { font-weight: 400; font-size: 12px; color: var(--mmr-muted); }
+
+/* Type: derived by default, a selector only when it cannot be. wp-admin styles
+   selects heavily, so [hidden] is restated rather than trusted. */
+.mmr-form-grid select[hidden] { display: none; }
+.mmr-derived { margin: 0; padding: 5px 0; font-weight: 600; }
+.mmr-derived[hidden] { display: none; }
+.mmr-who-warning { margin: 4px 0 0; font-size: 11px; color: var(--mmr-neg); }
+.mmr-who-warning[hidden] { display: none; }
+
 /* Amount picker — a panel inside the event modal, never a second modal. */
 .mmr-suggest {
 	margin-top: 16px;

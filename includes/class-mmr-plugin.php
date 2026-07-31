@@ -55,7 +55,10 @@ class MMR_Plugin {
 
 		add_action( 'admin_menu', array( $this, 'register_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
-		add_action( 'admin_init', array( $this, 'maybe_upgrade' ) );
+		// Ahead of MMR_Admin::handle_post(), also on admin_init: the first
+		// request after an update may be a save, and it must not write to a
+		// table that dbDelta has not caught up with yet.
+		add_action( 'admin_init', array( $this, 'maybe_upgrade' ), 1 );
 
 		// AJAX + POST handlers.
 		( new MMR_Ajax() )->register();
@@ -158,6 +161,13 @@ class MMR_Plugin {
 				'nonce'    => wp_create_nonce( 'mmr_ajax' ),
 				'slots'    => MMR_SLOTS_PER_DAY,
 				'days'     => MMR_DAY_COLUMNS,
+				// Event type labels, so the derived Type reads the same in the
+				// form as it does in the list and the filter.
+				'eventTypes' => array(
+					'invoice' => __( 'invoice', 'mm-register' ),
+					'revolut' => __( 'revolut', 'mm-register' ),
+					'cash'    => __( 'cash', 'mm-register' ),
+				),
 				// Week-pill status thresholds + labels, so live updates stay in
 				// sync with the server render. Colour still lives only in CSS;
 				// JS only picks the modifier class.
@@ -188,6 +198,17 @@ class MMR_Plugin {
 					'suggestCompanies' => __( 'Companies', 'mm-register' ),
 					/* translators: %s: month name, e.g. "July 2026". */
 					'noSuggestions' => __( 'No lessons booked in %s.', 'mm-register' ),
+					/* translators: %s: settle method(s) the type was derived from. */
+					'typeFrom'      => __( 'from settle method %s', 'mm-register' ),
+					/* translators: %s: comma-separated class names. */
+					'typeMixed'     => __( 'These classes settle differently: %s. Pick the type for this event.', 'mm-register' ),
+					/* translators: %s: comma-separated class names. */
+					'typeUnmapped'  => __( 'No settle method on: %s. Pick the type for this event.', 'mm-register' ),
+					'typeFreeText'  => __( 'No class selected — pick the type for this event.', 'mm-register' ),
+					'noMethod'      => __( 'no settle method', 'mm-register' ),
+					'archived'      => __( 'archived', 'mm-register' ),
+					/* translators: %s: class name. */
+					'removeClass'   => __( 'Remove %s', 'mm-register' ),
 				),
 			)
 		);

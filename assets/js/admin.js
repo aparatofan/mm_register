@@ -87,15 +87,21 @@
 				var modal = document.getElementById( opener.getAttribute( 'data-modal' ) );
 				if ( ! modal ) { return; }
 				var form = modal.querySelector( 'form' );
+				var data = opener.getAttribute( 'data-json' ) ? JSON.parse( opener.getAttribute( 'data-json' ) ) : null;
 				resetForm( form );
-				if ( opener.getAttribute( 'data-json' ) ) {
-					var data = JSON.parse( opener.getAttribute( 'data-json' ) );
+				if ( data ) {
 					fillForm( form, data );
 					if ( data.members ) {
 						populateMembers( modal, data.members );
 					}
 				} else {
 					clearMembers( modal );
+				}
+				// Fields that form.reset() and fillForm() cannot restore on
+				// their own — chips, derived displays — rebuild from here, so
+				// they always run after the form has been reset and filled.
+				if ( form ) {
+					form.dispatchEvent( new CustomEvent( 'mmr:fill', { detail: data || {} } ) );
 				}
 				openModal( modal );
 				return;
@@ -896,6 +902,204 @@
 		if ( label ) { label.classList.toggle( 'is-disabled', ! isInvoice ); }
 	}
 
+	/* Who — the entry point of the event form. Options are the register's own
+	   classes (archived included, so a historical document can still be
+	   recorded); the settle method on each one is what decides the document's
+	   Type, so it rides along on every chip and every result row. */
+	function initEventWho( form ) {
+		var chipBox = document.getElementById( 'mmr-event-chips' );
+		var search = document.getElementById( 'mmr-event-who-search' );
+		var resultBox = document.getElementById( 'mmr-event-who-results' );
+		var whoText = document.getElementById( 'mmr-event-who-text' );
+		var typeSelect = form.querySelector( '[data-field="type"]' );
+		var typeOut = document.getElementById( 'mmr-event-type-derived' );
+		var typeNote = document.getElementById( 'mmr-event-type-note' );
+		var root = document.getElementById( 'mmr-event-who' );
+		if ( ! root || ! chipBox || ! search || ! typeSelect ) { return null; }
+
+		var selected = [];
+		var results = [];
+		var timer = null;
+
+		function names( list ) {
+			return list.map( function ( c ) { return c.name; } ).join( ', ' );
+		}
+
+		/* The same rules as MMR_Data::derive_event_type(), which re-runs them
+		   on save — this copy only decides what the form shows. */
+		function derive() {
+			if ( ! selected.length ) {
+				return { resolved: false, reason: 'none', type: '', classes: [] };
+			}
+			var unmapped = selected.filter( function ( c ) { return ! c.type_hint; } );
+			if ( unmapped.length ) {
+				return { resolved: false, reason: 'unmapped', type: '', classes: unmapped };
+			}
+			var hints = [];
+			selected.forEach( function ( c ) {
+				if ( hints.indexOf( c.type_hint ) < 0 ) { hints.push( c.type_hint ); }
+			} );
+			if ( hints.length > 1 ) {
+				return { resolved: false, reason: 'mixed', type: '', classes: selected };
+			}
+			return { resolved: true, reason: 'ok', type: hints[ 0 ], classes: [] };
+		}
+
+		function renderType() {
+			var d = derive();
+			if ( d.resolved ) {
+				typeSelect.value = d.type;
+				typeSelect.hidden = true;
+				typeNote.hidden = true;
+				typeOut.hidden = false;
+				var methods = [];
+				selected.forEach( function ( c ) {
+					if ( c.settle_method && methods.indexOf( c.settle_method ) < 0 ) { methods.push( c.settle_method ); }
+				} );
+				typeOut.textContent = ( ( cfg.eventTypes || {} )[ d.type ] || d.type )
+					+ ( methods.length ? ' · ' + ( i18n.typeFrom || 'from settle method %s' ).replace( '%s', methods.join( ', ' ) ) : '' );
+			} else {
+				// Unresolved: the user makes one explicit choice, and the note
+				// says which classes made the answer ambiguous.
+				typeOut.hidden = true;
+				typeSelect.hidden = false;
+				var message = '';
+				if ( 'mixed' === d.reason ) {
+					message = ( i18n.typeMixed || 'These classes settle differently: %s. Pick the type for this event.' ).replace( '%s', names( d.classes ) );
+				} else if ( 'unmapped' === d.reason ) {
+					message = ( i18n.typeUnmapped || 'No settle method on: %s. Pick the type for this event.' ).replace( '%s', names( d.classes ) );
+				} else {
+					message = i18n.typeFreeText || 'No class selected — pick the type for this event.';
+				}
+				typeNote.textContent = message;
+				typeNote.hidden = false;
+			}
+			syncKsefField( form );
+		}
+
+		function renderChips() {
+			chipBox.textContent = '';
+			selected.forEach( function ( entry ) {
+				var chip = el( 'span', { 'class': 'mmr-chip' } );
+				chip.appendChild( el( 'span', { 'class': 'mmr-chip-name' }, entry.name ) );
+				if ( entry.company ) {
+					chip.appendChild( el( 'span', { 'class': 'mmr-chip-meta' }, entry.company ) );
+				}
+				chip.appendChild( el(
+					'span',
+					{ 'class': 'mmr-chip-badge' + ( entry.type_hint ? '' : ' mmr-chip-badge--none' ) },
+					entry.settle_method || ( i18n.noMethod || 'no settle method' )
+				) );
+				var remove = el( 'button', {
+					'type': 'button',
+					'class': 'mmr-chip-remove',
+					'aria-label': ( i18n.removeClass || 'Remove %s' ).replace( '%s', entry.name )
+				}, '×' );
+				remove.addEventListener( 'click', function () { drop( entry.id ); } );
+				chip.appendChild( remove );
+				// The chip *is* the field: this is what gets posted.
+				chip.appendChild( el( 'input', { 'type': 'hidden', 'name': 'class_ids[]', 'value': String( entry.id ) } ) );
+				chipBox.appendChild( chip );
+			} );
+			// With no class picked, the free-text box carries the requirement,
+			// so the browser blocks an empty Who without custom validation.
+			if ( whoText ) { whoText.required = ! selected.length; }
+			renderType();
+		}
+
+		function add( entry ) {
+			var exists = selected.some( function ( c ) { return c.id === entry.id; } );
+			if ( ! exists ) { selected.push( entry ); }
+			search.value = '';
+			hideResults();
+			renderChips();
+		}
+
+		function drop( id ) {
+			selected = selected.filter( function ( c ) { return c.id !== id; } );
+			renderChips();
+		}
+
+		function hideResults() {
+			resultBox.hidden = true;
+			resultBox.textContent = '';
+		}
+
+		function renderResults() {
+			resultBox.textContent = '';
+			var open = results.filter( function ( c ) {
+				return ! selected.some( function ( s ) { return s.id === c.id; } );
+			} );
+			if ( ! open.length ) {
+				resultBox.appendChild( el( 'div', { 'class': 'mmr-picker-empty' }, i18n.noResults || 'No results' ) );
+				resultBox.hidden = false;
+				return;
+			}
+			open.forEach( function ( entry ) {
+				var item = el( 'div', { 'class': 'mmr-picker-item' } );
+				var text = el( 'span', { 'class': 'mmr-pi-text' } );
+				text.appendChild( el( 'span', { 'class': 'mmr-pi-name' }, entry.name ) );
+				// Enough context to tell two similarly named classes apart.
+				var meta = [ entry.company, 'archived' === entry.status ? ( i18n.archived || 'archived' ) : '' ]
+					.filter( function ( part ) { return !! part; } ).join( ' · ' );
+				if ( meta ) { text.appendChild( el( 'span', { 'class': 'mmr-pi-meta' }, meta ) ); }
+				item.appendChild( text );
+				item.appendChild( el(
+					'span',
+					{ 'class': 'mmr-chip-badge' + ( entry.type_hint ? '' : ' mmr-chip-badge--none' ) },
+					entry.settle_method || ( i18n.noMethod || 'no settle method' )
+				) );
+				item.addEventListener( 'mousedown', function ( e ) {
+					e.preventDefault();
+					add( entry );
+				} );
+				resultBox.appendChild( item );
+			} );
+			resultBox.hidden = false;
+		}
+
+		function load() {
+			ajax( 'mmr_search_classes', { term: search.value, all_statuses: 1 } ).then( function ( res ) {
+				if ( ! res || ! res.success ) { return; }
+				results = res.data.classes;
+				renderResults();
+			} );
+		}
+
+		search.addEventListener( 'input', function () {
+			clearTimeout( timer );
+			timer = setTimeout( load, 150 );
+		} );
+		// Focus alone opens the list: the options are the field, not a
+		// separate action to reach for.
+		search.addEventListener( 'focus', load );
+		search.addEventListener( 'keydown', function ( e ) {
+			if ( 'Escape' === e.key ) { hideResults(); }
+		} );
+		document.addEventListener( 'click', function ( e ) {
+			if ( ! root.contains( e.target ) ) { hideResults(); }
+		} );
+
+		return {
+			add: add,
+			set: function ( list ) {
+				selected = ( list || [] ).map( function ( c ) {
+					return {
+						id: Number( c.id ),
+						name: c.name,
+						company: c.company || '',
+						settle_method: c.settle_method || '',
+						type_hint: c.type_hint || ''
+					};
+				} );
+				results = [];
+				hideResults();
+				search.value = '';
+				renderChips();
+			}
+		};
+	}
+
 	function initEventFlags( page ) {
 		var totals = {
 			issued: document.getElementById( 'mmr-events-issued' ),
@@ -946,8 +1150,9 @@
 	}
 
 	/* The amount picker: a panel inside the event modal that reads the
-	   computed settlement, so no figure is ever retyped between pages. */
-	function initEventSuggestions( page ) {
+	   computed settlement, so no figure is ever retyped between pages. Who and
+	   Type are no longer its business — the Who field owns both. */
+	function initEventSuggestions( page, who ) {
 		var panel = document.getElementById( 'mmr-suggest-panel' );
 		var body = document.getElementById( 'mmr-suggest-body' );
 		var labelOut = document.getElementById( 'mmr-suggest-label' );
@@ -972,17 +1177,22 @@
 
 		function useEntry( entry ) {
 			fillForm( form, {
-				payer_label: entry.label,
 				amount: entry.amount,
 				source_kind: entry.kind,
 				source_id: entry.id,
 				source_period: period
 			} );
-			// A type hint only overwrites the field when the settle method
-			// actually mapped to one — otherwise the current choice stands.
-			if ( entry.type_hint ) {
-				fillForm( form, { type: entry.type_hint } );
-				syncKsefField( form );
+			// A class suggestion also names a payer, so it fills Who as well —
+			// and Type then derives from that class's settle method, exactly
+			// as it would have done had the class been picked by hand.
+			if ( 'class' === entry.kind && who ) {
+				who.add( {
+					id: Number( entry.id ),
+					name: entry.label,
+					company: '',
+					settle_method: entry.settle_method || '',
+					type_hint: entry.type_hint || ''
+				} );
 			}
 			panel.hidden = true;
 		}
@@ -1073,11 +1283,24 @@
 		if ( ! page ) { return; }
 
 		initEventFlags( page );
-		initEventSuggestions( page );
 
 		var modal = document.getElementById( 'mmr-event-modal' );
 		var form = modal ? modal.querySelector( 'form' ) : null;
 		if ( ! form ) { return; }
+
+		var who = initEventWho( form );
+		initEventSuggestions( page, who );
+
+		// Opening the modal — new or edit — rebuilds the chips and re-derives
+		// Type from them. Fired by initModals once the form is reset/filled.
+		form.addEventListener( 'mmr:fill', function ( e ) {
+			var data = e.detail || {};
+			if ( who ) {
+				who.set( data.classes || [] );
+			} else {
+				syncKsefField( form );
+			}
+		} );
 
 		form.addEventListener( 'change', function ( e ) {
 			if ( e.target.matches( '[data-field="type"]' ) ) { syncKsefField( form ); }
@@ -1091,13 +1314,6 @@
 			}
 		} );
 
-		// Must be bound on document, not on the page wrapper: initModals()
-		// listens on document too and was registered first, so this runs after
-		// the form has been reset / filled from data-json. A listener on the
-		// wrapper would fire on the way up, i.e. before it.
-		document.addEventListener( 'click', function ( e ) {
-			if ( e.target.closest( '.mmr-open-modal' ) ) { syncKsefField( form ); }
-		} );
 	}
 
 	/* ---------------------------------------------------------------

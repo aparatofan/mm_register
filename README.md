@@ -23,9 +23,12 @@ build step.**
   export. Nothing is stored; any month is reproducible.
 - **Events** — the receivables register: every document issued (invoice /
   revolut / cash) with KSEF · SENT · PAID ticks you flip inline, a payment date
-  and a year-scoped **Outstanding** total. Amounts are taken straight from the
-  computed settlement — pick a class, student or company for a month and Who,
-  Amount and Type fill themselves — and are then frozen as snapshots, so later
+  and a year-scoped **Outstanding** total. A document starts with **Who** — one
+  or more classes, picked as chips straight from the register, plus free text
+  for a payer with no class on record — and its **Type** is then derived from
+  those classes' settle methods rather than chosen. Amounts are taken straight
+  from the computed settlement — pick a class, student or company for a month
+  and the figure fills itself — and are then frozen as snapshots, so later
   lesson edits never rewrite an issued document.
 - **Students** and **Classes** as standalone pages: search, status filters,
   archive/restore (never hard delete), modal editing, members repeater with
@@ -49,11 +52,13 @@ Invoices themselves are still issued in KSeF; Events only records them.
 - Slug `mm-register`, main file `mm-register.php`, everything prefixed `mmr_`.
 - WordPress 6.x, PHP 8.1+. Custom `dbDelta` tables: `mmr_students`,
   `mmr_classes`, `mmr_class_members`, `mmr_lessons`, `mmr_companies`,
-  `mmr_events`.
+  `mmr_events`, `mmr_event_classes`.
 - DB version tracked in the `mmr_db_version` option; upgrades run
   automatically on plugin load and are idempotent. The v2.1 upgrade backs up
   `mmr_classes` before dropping its `venue` and `sort_name` columns; v2.2 only
-  adds `mmr_events` via `dbDelta` and touches nothing existing.
+  adds `mmr_events` via `dbDelta` and touches nothing existing, and v2.3 only
+  adds `mmr_event_classes` and the `mmr_events.who_text` column — existing
+  events keep their payer label and are never migrated.
 - All pages gated by `manage_options`; all writes via nonces + capability
   checks; all SQL via `$wpdb->prepare`; all output escaped.
 - Assets are enqueued **only** on the plugin's own admin screens (avoids the
