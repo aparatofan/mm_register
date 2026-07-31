@@ -183,6 +183,7 @@ class MMR_DB {
 		$lessons = self::table( 'lessons' );
 		$companies = self::table( 'companies' );
 		$events = self::table( 'events' );
+		$event_classes = self::table( 'event_classes' );
 
 		$sql = array();
 
@@ -266,6 +267,7 @@ class MMR_DB {
 			doc_number VARCHAR(190) NULL DEFAULT NULL,
 			issue_date DATE NOT NULL,
 			payer_label VARCHAR(190) NOT NULL,
+			who_text VARCHAR(190) NULL DEFAULT NULL,
 			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 			ksef TINYINT(1) NOT NULL DEFAULT 0,
 			sent TINYINT(1) NOT NULL DEFAULT 0,
@@ -282,6 +284,18 @@ class MMR_DB {
 			KEY paid (paid),
 			KEY type (type),
 			KEY source (source_kind, source_id)
+		) {$charset_collate};";
+
+		// Who an event is for (v2.3): one row per selected class, so events stay
+		// queryable by class. `payer_label` keeps the readable snapshot and
+		// `who_text` the free-text remainder; neither is the reference.
+		$sql[] = "CREATE TABLE {$event_classes} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			event_id BIGINT UNSIGNED NOT NULL,
+			class_id BIGINT UNSIGNED NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY event_class (event_id, class_id),
+			KEY class_id (class_id)
 		) {$charset_collate};";
 
 		foreach ( $sql as $statement ) {
@@ -304,6 +318,7 @@ class MMR_DB {
 			'lessons',
 			'companies',
 			'events',
+			'event_classes',
 		);
 	}
 

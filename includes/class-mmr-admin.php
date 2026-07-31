@@ -379,19 +379,38 @@ class MMR_Admin {
 	/**
 	 * Save an event. Field-level rules (type whitelist, invoice-only KSeF,
 	 * paid/paid_date coupling, source provenance) live in
-	 * MMR_Data::normalize_event(), which every write path shares.
+	 * MMR_Data::normalize_event(), which every write path shares; who/type
+	 * resolution lives in MMR_Data::resolve_event_who(), which discards class
+	 * IDs that resolve to nothing and re-derives the type server-side.
+	 *
+	 * The posted `type` is therefore a fallback, not an input: it is used only
+	 * where derivation cannot succeed (mixed or unmapped settle methods, or a
+	 * free-text-only payer).
 	 */
 	protected function post_save_event() {
 		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0;
-		$payer_label = $this->text( 'payer_label' );
-		if ( '' === $payer_label ) {
+
+		$class_ids = isset( $_POST['class_ids'] ) ? (array) wp_unslash( $_POST['class_ids'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$class_ids = array_values( array_unique( array_filter( array_map( 'absint', $class_ids ) ) ) );
+		// Drop anything that does not resolve to a real class before the
+		// required-check, so a payload of nothing but junk IDs is rejected
+		// rather than saved as an event with no payer.
+		$known = MMR_Data::classes_by_ids( $class_ids );
+		$class_ids = array_values( array_filter( $class_ids, function ( $class_id ) use ( $known ) {
+			return isset( $known[ $class_id ] );
+		} ) );
+		$who_text = $this->text( 'who_text' );
+
+		if ( empty( $class_ids ) && '' === $who_text ) {
 			$this->redirect( 'events', 'Who is required.', $this->filter_args(), true );
 		}
+
 		MMR_Data::save_event( array(
 			'type'          => $this->text( 'type' ),
 			'doc_number'    => $this->text( 'doc_number' ),
 			'issue_date'    => $this->text( 'issue_date' ),
-			'payer_label'   => $payer_label,
+			'class_ids'     => $class_ids,
+			'who_text'      => $who_text,
 			'amount'        => $this->money( 'amount' ),
 			'ksef'          => $this->bool( 'ksef' ),
 			'sent'          => $this->bool( 'sent' ),

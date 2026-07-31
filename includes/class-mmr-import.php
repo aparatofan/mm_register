@@ -119,7 +119,10 @@ class MMR_Import {
 		// Warnings — events without a payer, which the validator cannot save.
 		$nameless_events = 0;
 		foreach ( $events as $event ) {
-			if ( '' === trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' ) ) {
+			$has_classes = ! empty( $event['class_refs'] ) && is_array( $event['class_refs'] );
+			$has_text = '' !== trim( isset( $event['who_text'] ) ? (string) $event['who_text'] : '' )
+				|| '' !== trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' );
+			if ( ! $has_classes && ! $has_text ) {
 				$nameless_events++;
 			}
 		}
@@ -275,12 +278,36 @@ class MMR_Import {
 			$imported['lessons']++;
 		}
 
-		// Events reference nothing by ref — the payer is stored verbatim as
-		// text. Every field goes through the same validator the form uses.
+		// Events: the payer is a set of class refs plus a free-text remainder,
+		// and the label is composed from them. An event exported before 2.3 has
+		// neither, only `payer_label` — that string is imported verbatim as the
+		// free text, never guessed back into a class. Every field goes through
+		// the same validator the form uses.
 		foreach ( $events as $event ) {
-			if ( ! is_array( $event ) || '' === trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' ) ) {
+			if ( ! is_array( $event ) ) {
 				continue;
 			}
+			$payer_label = trim( isset( $event['payer_label'] ) ? (string) $event['payer_label'] : '' );
+			$who_text = trim( isset( $event['who_text'] ) ? (string) $event['who_text'] : '' );
+
+			$class_ids = array();
+			if ( ! empty( $event['class_refs'] ) && is_array( $event['class_refs'] ) ) {
+				foreach ( $event['class_refs'] as $ref ) {
+					$ref = (string) $ref;
+					if ( isset( $class_map[ $ref ] ) ) {
+						$class_ids[] = $class_map[ $ref ];
+					}
+				}
+			}
+			if ( empty( $class_ids ) && '' === $who_text ) {
+				$who_text = $payer_label;
+			}
+			if ( empty( $class_ids ) && '' === $who_text ) {
+				continue; // No payer at all — skipped, as the dry run warned.
+			}
+
+			$event['class_ids'] = $class_ids;
+			$event['who_text'] = $who_text;
 			MMR_Data::save_event( $event );
 			$imported['events']++;
 		}
@@ -374,15 +401,29 @@ class MMR_Import {
 			);
 		}
 
-		// Events carry no refs: the payer is a text label, and source_* is a
-		// plain record of where the figure came from.
+		// Events: `class_refs` re-links the payer on import, `payer_label` is
+		// the readable snapshot of it, and source_* stays a plain record of
+		// where the figure came from. One event is one row, its classes joined
+		// in the label and listed in the refs — nothing downstream wants an
+		// event split across several rows.
 		$events = $wpdb->get_results( 'SELECT * FROM ' . MMR_DB::table( 'events' ) . ' ORDER BY issue_date ASC, id ASC' ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$event_classes = MMR_Data::event_classes_map( wp_list_pluck( $events, 'id' ) );
 		foreach ( $events as $e ) {
+			$class_refs = array();
+			if ( isset( $event_classes[ (int) $e->id ] ) ) {
+				foreach ( $event_classes[ (int) $e->id ] as $class ) {
+					if ( isset( $class_ref[ (int) $class['id'] ] ) ) {
+						$class_refs[] = $class_ref[ (int) $class['id'] ];
+					}
+				}
+			}
 			$out['events'][] = array(
 				'type'          => $e->type,
 				'doc_number'    => $e->doc_number,
 				'issue_date'    => $e->issue_date,
 				'payer_label'   => $e->payer_label,
+				'class_refs'    => $class_refs,
+				'who_text'      => (string) $e->who_text,
 				'amount'        => (float) $e->amount,
 				'ksef'          => (int) $e->ksef,
 				'sent'          => (int) $e->sent,

@@ -44,18 +44,32 @@ class MMR_Ajax {
 	}
 
 	/**
-	 * Type-ahead over active classes.
+	 * Type-ahead over classes.
+	 *
+	 * Active only by default — the calendar books lessons for classes that
+	 * are still running. `all_statuses` widens it for the event form's Who
+	 * field, where an archived class must stay selectable so a historical
+	 * document can still be recorded.
 	 */
 	public function mmr_search_classes() {
 		$this->guard();
 		$term = isset( $_POST['term'] ) ? sanitize_text_field( wp_unslash( $_POST['term'] ) ) : '';
-		$classes = MMR_Data::classes( array( 'status' => 'active', 'search' => $term ) );
+		$all = ! empty( $_POST['all_statuses'] );
+		$classes = MMR_Data::classes( array(
+			'status'  => $all ? 'all' : 'active',
+			'search'  => $term,
+			'orderby' => $all ? 'status' : 'name',
+		) );
+		$companies = MMR_Data::company_names();
 		$out = array();
 		foreach ( $classes as $class ) {
-			$out[] = array(
-				'id'   => (int) $class->id,
-				'name' => $class->name,
-				'fee'  => (float) $class->fee,
+			$class->company = ( $class->company_id && isset( $companies[ (int) $class->company_id ] ) )
+				? $companies[ (int) $class->company_id ]
+				: '';
+			// The type derivation the Who field shows as a badge, and the fee
+			// the calendar picker shows — one payload serves both callers.
+			$out[] = MMR_Data::class_ref_payload( $class ) + array(
+				'fee'         => (float) $class->fee,
 				'fee_display' => mmr_money( $class->fee ),
 			);
 		}

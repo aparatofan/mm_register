@@ -1,6 +1,6 @@
 # MM REGISTER — WordPress Plugin Specification
 
-**Version:** 2.2
+**Version:** 2.3
 **Author of spec:** Mariusz Mirecki + Claude
 **Target:** WordPress plugin replacing the REGISTER Google Sheet's scheduling core: weekly lesson calendar, students / classes / companies database, computed monthly settlement report, register of issued documents.
 **Implementation:** Claude Code. Pure PHP + vanilla JS. **No jQuery. No external JS/CSS frameworks. No build step.**
@@ -10,7 +10,10 @@
 > Companies page/table, and a per-class Company link; it drops the class
 > `venue` and `sort_name` columns. v2.2 adds the **Events** page and the
 > `mmr_events` table — receivables tracking, deliberately reintroduced on a
-> new data model (see §2 and §7.3). History is in the repo.
+> new data model (see §2 and §7.3). v2.3 makes an event's **Who** the first
+> field and a set of classes (`mmr_event_classes`, §5.6.1) plus free text, and
+> derives **Type** from their settle methods instead of asking for it. History
+> is in the repo.
 
 ---
 
@@ -80,16 +83,22 @@ does not create it.
    future lessons. This must never be broken.
 4. **Invoicing is out of scope.** KSeF handles it; the plugin produces the
    per-student "to bill" numbers.
-5. **An event's amount is a snapshot, and its payer is a label.** Once written
-   to `mmr_events.amount` the figure never re-derives from lessons — adding,
-   re-rating or deleting a lesson in an already-billed month must leave every
-   existing event untouched, exactly as `fee_snapshot` does (§3.3). The payer
-   is stored as free text, not a foreign key, because real documents do not fit
-   one: a month's settlement for one payer is routinely split across several
-   documents (86% / 14% of the same amount), and the name on a document sits at
-   whichever level was convenient — class, student or company. The optional
-   `source_kind` / `source_id` / `source_period` trio records where the figure
-   came from without constraining the row, and is never cleared by later edits.
+5. **An event's amount is a snapshot; its payer is a set of classes plus free
+   text.** Once written to `mmr_events.amount` the figure never re-derives from
+   lessons — adding, re-rating or deleting a lesson in an already-billed month
+   must leave every existing event untouched, exactly as `fee_snapshot` does
+   (§3.3). *(v2.2 stored the payer as free text only. v2.3 keeps that string as
+   the readable snapshot in `payer_label` and adds the classes behind it in
+   `mmr_event_classes`, because the class is what carries `settle_method` — the
+   fact that says what kind of document this is.)* One document may name
+   several classes, and the free-text remainder still covers a payer with no
+   class on record. What is deliberately **not** modelled is a constraint: a
+   month's settlement for one payer is routinely split across several documents
+   (86% / 14% of the same amount), so nothing stops two events naming the same
+   class in the same month, and the amount is never auto-summed from the
+   selection. The optional `source_kind` / `source_id` / `source_period` trio
+   still records where a *figure* came from, and is never cleared by later
+   edits.
 
 ## 4. Technical requirements
 
@@ -178,10 +187,11 @@ The receivables register. One row per document issued.
 | column | type | notes |
 |---|---|---|
 | id | BIGINT PK AI | |
-| type | VARCHAR(20) DEFAULT `invoice` | one of `invoice` / `revolut` / `cash`, validated server-side |
+| type | VARCHAR(20) DEFAULT `invoice` | one of `invoice` / `revolut` / `cash`, validated server-side. **Derived from the settle methods of the event's classes (§5.6.1), not chosen** — the posted value is accepted only where derivation cannot succeed |
 | doc_number | VARCHAR(190) NULL | free text: KSeF ID, `czekam na PO`, or empty |
 | issue_date | DATE | day the document was issued |
-| payer_label | VARCHAR(190) | the "who", always stored verbatim as text (§3.5) |
+| payer_label | VARCHAR(190) | the readable "who": every selected class, then the free text, comma-joined. A snapshot — composed on save, and the only column the list, sort, search and export read |
+| who_text | VARCHAR(190) NULL | the free-text remainder of the "who": a payer with no class on record. Pre-2.3 rows keep their whole label in `payer_label` and have none |
 | amount | DECIMAL(10,2) DEFAULT 0 | snapshot; never re-derived from lessons |
 | ksef | TINYINT(1) DEFAULT 0 | **invoices only** — any other type forces 0, server-side |
 | sent | TINYINT(1) DEFAULT 0 | a document, e-mail or SMS went out; manual tick |
@@ -196,9 +206,40 @@ The receivables register. One row per document issued.
 Indexed on `issue_date`, `paid`, `type` and `(source_kind, source_id)`.
 Default list order is `issue_date DESC, id DESC`.
 
+### 5.6.1 `mmr_event_classes` — who an event is for
+
+An event bills one or more **classes**. One row per class, so events stay
+queryable by class with a normal join rather than a `LIKE` over a label.
+
+| column | type | notes |
+|---|---|---|
+| id | BIGINT PK AI | |
+| event_id | BIGINT | the event |
+| class_id | BIGINT | the class billed; any status — an archived class must stay selectable so a historical document can be recorded |
+
+`UNIQUE (event_id, class_id)`, plus a key on `class_id`. Rows are deleted with
+their event.
+
+**Type derivation.** `mmr_classes.settle_method` is free text, so
+`MMR_Data::event_type_hint()` is the single place that decides what a method
+means (`invoice` / `revolut` / `cash`, or `''` when it maps to nothing).
+`MMR_Data::derive_event_type()` resolves an event's type only when **every**
+selected class maps to the **same** type. Anything else — classes that settle
+differently, a class with no settle method, or no class at all — is reported
+unresolved with the offending class names, and only then does the form ask the
+user to choose. The server re-derives on every save and ignores the posted type
+whenever derivation succeeds: the client value is a display convenience, never
+an input.
+
+**Legacy rows.** A pre-2.3 event has no class rows and no `who_text`; its whole
+"who" is the `payer_label` string. It renders as it always did, and the edit
+form puts that string in the free-text box so a re-save preserves it verbatim.
+Old strings are never fuzzy-matched to class records — a wrong match would
+silently corrupt financial history.
+
 ### 5.7 Versioning & upgrades
 
-- `MMR_DB_VERSION` (currently `2.2`) is stored in the `mmr_db_version` option.
+- `MMR_DB_VERSION` (currently `2.3`) is stored in the `mmr_db_version` option.
 - On plugin load (and activation), if the stored option is behind, the upgrade
   routine runs and is idempotent:
   - **v1 → v2:** dump the legacy tables (settlements, budget_items,
@@ -210,6 +251,11 @@ Default list order is `issue_date DESC, id DESC`.
     `ALTER TABLE … DROP COLUMN` whichever of `venue` / `sort_name` still exist.
   - **v2.1 → v2.2:** no bespoke routine — `dbDelta` creates `mmr_events`. No
     existing table is touched and nothing is dropped.
+  - **v2.2 → v2.3:** no bespoke routine — `dbDelta` creates `mmr_event_classes`
+    and adds `mmr_events.who_text`. Existing events keep their `payer_label`
+    and are never rewritten; no data is migrated (§5.6.1). The upgrade runs on
+    `admin_init` at priority 1, ahead of the form handler, so the first request
+    after an update cannot write to a table dbDelta has not reached yet.
   - Finally `dbDelta` runs for the current tables — creating `mmr_companies`
     and adding the new student columns (`email_2`, `phone`, `level`),
     `mmr_classes.company_id` and the `mmr_events` table. Backups are written to
@@ -280,7 +326,9 @@ two are independent: Settlement stores nothing, Events stores everything.
 **Toolbar.** Year selector (distinct `YEAR(issue_date)` plus the current year,
 default = current year), type filter (all / invoice / revolut / cash), status
 filter (all / **unpaid** / paid / not sent / invoice not in KSeF), search over
-`payer_label` and `doc_number`, and **+ Add event**. On the right, three
+`payer_label`, `doc_number` and the names of the event's classes (so a class
+renamed after a document was issued still finds it), and **+ Add event**. On
+the right, three
 `.mmr-total-chip`s — **all three scoped to the selected year and the active
 filters, with the label saying so** — computed in one grouped query:
 
@@ -312,16 +360,34 @@ sortable (server-side, same header markup as Settlement).
   confirmation. Archive-not-delete does not apply: an event is the record of a
   document, and a wrong row must not linger inside a financial total.
 
-**Add/Edit modal** (§8.2 grid): Type · Issue date (defaults to today) / Who
-(required) + **Take from settlement** · Amount / Document number · Paid date /
-KSEF · SENT · PAID / Notes (full width), plus hidden `id` and the `source_*`
-trio. Switching Type away from `invoice` disables and unticks KSEF client-side;
-the server enforces the same rule regardless.
+**Add/Edit modal** (§8.2 grid): **Who** (required, full width) / Type ·
+Issue date (defaults to today) / Amount + **Take amount from settlement** ·
+Document number / Paid date · KSEF · SENT · PAID / Notes (full width), plus
+hidden `id` and the `source_*` trio. Switching Type away from `invoice`
+disables and unticks KSEF client-side; the server enforces the same rule
+regardless.
+
+**Who is the entry point of the form**, and it is a multi-select: the classes
+this document bills, each a removable chip carrying its company and its
+`settle_method` as a badge — so it is always visible why Type resolved the way
+it did. Options are the register's own classes, searched through the same
+`mmr_search_classes` endpoint the calendar picker uses; archived classes are
+listed too (active first), because a historical document must still be
+recordable. Focus alone opens the list: the options *are* the field, not an
+extra action to reach for. Below the chips sits a free-text box for a payer
+with no class on record. Who is required — at least one class, or free text.
+
+**Type is derived, not chosen.** It renders read-only whenever the selected
+classes agree on one settle method, and only becomes a selector in the cases
+§5.6.1 calls unresolved, with an inline warning naming the classes responsible.
+The client recomputes on every change to the selection; the server re-derives
+independently on save.
 
 **The amount picker** is the point of the feature: no number is ever retyped
-from one page into another. **Take from settlement** opens a panel *inside* the
-modal (never a nested modal) whose period defaults to the month of the Issue
-date currently in the form, with ‹ / › to step months. It lists three groups
+from one page into another. **Take amount from settlement**, on the Amount
+field, opens a panel *inside* the modal (never a nested modal) whose period
+defaults to the month of the Issue date currently in the form, with ‹ / › to
+step months. It lists three groups
 built by `MMR_Data::event_suggestions()` from `MMR_Data::settlement()` — which
 it reads and never modifies:
 
@@ -331,9 +397,11 @@ it reads and never modifies:
 - **Companies** — Σ `class_total` of that company's classes this month, with
   the rolled-up classes named in the detail so it is never an opaque number.
 
-`Use` fills Who, Amount, Type (only when the class's `settle_method` maps to
-one; for a company only when every rolled-up class agrees) and the hidden
-`source_*` fields, then closes the panel. **Every field stays editable
+`Use` fills Amount and the hidden `source_*` fields, then closes the panel. A
+**class** suggestion also adds that class to Who as a chip, from which Type
+then derives exactly as it would had the class been picked by hand; student and
+company suggestions fill the amount only, since neither is a class. **Every
+field stays editable
 afterwards, and editing does not clear `source_*`** — the provenance records
 where the figure came from, not that it was left untouched. Because the trio is
 recorded, the picker marks a suggestion that already produced an event for that
@@ -527,6 +595,30 @@ members) and lessons; the fee printed in the source sheet becomes
       `MMR_Data::settlement()` has no key added, renamed or removed.
 - [ ] Taking a class suggestion fills Who, Amount and Type in one click, with
       no typing.
+
+### Who-first events (v2.3)
+
+- [ ] `{$wpdb->prefix}mmr_event_classes` and `mmr_events.who_text` are created
+      by `dbDelta` on upgrade from 2.2 with no data loss; `mmr_db_version`
+      reads `2.3`; a fresh install and an upgrade end with the same schema.
+- [ ] The event form opens with Who as the first field, and it accepts several
+      classes, each a removable chip.
+- [ ] Class options come from the register with no extra click; there is no
+      "Take from settlement" button on Who.
+- [ ] Selecting a class whose settle method is *invoice* sets Type to invoice
+      with no user action, displayed read-only.
+- [ ] Selecting classes with differing settle methods shows a warning naming
+      them and requires one explicit Type choice; so does a class with no
+      settle method, and a free-text-only payer.
+- [ ] A posted `type` is ignored whenever derivation succeeds, including from a
+      crafted request.
+- [ ] Class IDs that resolve to nothing are discarded, never stored; an event
+      of nothing but junk IDs is rejected as "Who is required".
+- [ ] Saving stores every selected class and the resolved type; reopening the
+      event restores the exact selection.
+- [ ] Searching Who matches an event when *any* of its classes matches.
+- [ ] A pre-2.3 event still displays its label, and can be edited and re-saved
+      without data loss or a guessed class match.
 - [ ] A student suggestion's amount equals that student's "To bill" on the
       Settlement page for the same month, TBT surcharge included.
 - [ ] A company suggestion equals the sum of its classes' totals for the month,
