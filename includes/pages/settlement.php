@@ -82,7 +82,7 @@ foreach ( $report['students'] as $s ) {
 			<span class="mmr-pill mmr-pill--lessons mmr-pill--<?php echo esc_attr( $lessons_status ); ?>" aria-label="<?php echo esc_attr( $lessons_aria ); ?>">
 				<span class="mmr-pill-label"><?php esc_html_e( 'Lessons', 'mm-register' ); ?>:</span> <strong class="mmr-pill-value"><?php echo (int) $month_lessons; ?></strong>
 			</span>
-			<span class="mmr-total-chip"><?php esc_html_e( 'Month total', 'mm-register' ); ?>: <strong><?php echo mmr_money_esc( $report['month_total'] ); ?></strong></span>
+			<span class="mmr-total-chip"><?php esc_html_e( 'Month total', 'mm-register' ); ?>: <strong><?php echo mmr_money_esc( $report['month_to_bill'] ); ?></strong></span>
 			<span class="mmr-total-chip mmr-total-month"><?php esc_html_e( 'To bill', 'mm-register' ); ?>: <strong><?php echo mmr_money_esc( $report['to_bill_total'] ); ?></strong></span>
 		</div>
 	</div>
@@ -124,7 +124,7 @@ foreach ( $report['students'] as $s ) {
 					</th>
 					<th class="mmr-num"><?php esc_html_e( 'Lessons', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Rate (snapshot)', 'mm-register' ); ?></th>
-					<th class="mmr-num"><?php esc_html_e( 'Class total', 'mm-register' ); ?></th>
+					<th class="mmr-num"><?php esc_html_e( 'To bill', 'mm-register' ); ?></th>
 					<th><?php esc_html_e( 'Members', 'mm-register' ); ?></th>
 				</tr>
 			</thead>
@@ -139,14 +139,25 @@ foreach ( $report['students'] as $s ) {
 						data-sort-class="<?php echo esc_attr( $row['class_name'] ); ?>"
 						data-sort-company="<?php echo esc_attr( $row['company'] ?? '' ); ?>"
 						data-sort-method="<?php echo esc_attr( $row['settle_method'] ?? '' ); ?>"
-						data-class-total="<?php echo esc_attr( $row['class_total'] ); ?>">
+						data-class-total="<?php echo esc_attr( $row['to_bill'] ); ?>">
 						<td><strong><?php echo esc_html( $row['class_name'] ); ?></strong></td>
 						<td><?php echo esc_html( $row['client_type'] ); ?></td>
 						<td><?php echo esc_html( $row['company'] ); ?></td>
 						<td><?php echo esc_html( $row['settle_method'] ); ?></td>
 						<td class="mmr-num"><?php echo (int) $row['lesson_count']; ?></td>
 						<td class="mmr-muted"><?php echo esc_html( implode( ', ', $fee_parts ) ); ?></td>
-						<td class="mmr-num"><strong><?php echo mmr_money_esc( $row['class_total'] ); ?></strong></td>
+						<td class="mmr-num">
+							<strong><?php echo mmr_money_esc( $row['to_bill'] ); ?></strong>
+							<?php if ( $row['tbt_total'] > 0 ) : ?>
+								<?php /* Say so, so a figure the lesson rates alone cannot explain never looks like an error. */ ?>
+								<span class="mmr-muted mmr-small mmr-incl-tbt">
+									<?php
+									/* translators: %s: TBT surcharge included in the figure above. */
+									printf( esc_html__( 'incl. TBT %s', 'mm-register' ), esc_html( mmr_money( $row['tbt_total'] ) ) );
+									?>
+								</span>
+							<?php endif; ?>
+						</td>
 						<td>
 							<?php echo count( $row['members'] ); ?>
 							<?php if ( $row['members'] ) : ?>
@@ -187,7 +198,7 @@ foreach ( $report['students'] as $s ) {
 			<tfoot>
 				<tr>
 					<th colspan="6" class="mmr-foot-label" id="mmr-class-foot-label"><?php esc_html_e( 'Month total', 'mm-register' ); ?></th>
-					<th class="mmr-num" id="mmr-class-foot-total"><?php echo mmr_money_esc( $report['month_total'] ); ?></th>
+					<th class="mmr-num" id="mmr-class-foot-total"><?php echo mmr_money_esc( $report['month_to_bill'] ); ?></th>
 					<th></th>
 				</tr>
 			</tfoot>

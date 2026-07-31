@@ -78,6 +78,16 @@ does not create it.
 2. **TBT surcharge is a flat monthly amount per student.** It is added **once
    per month** to that student's bill if the student had ≥1 lesson that month,
    regardless of how many classes they attend. Stored per student, editable.
+   Because the class — not the student — is usually what gets invoiced, the
+   surcharge must also reach the per-class figures, and exactly once: it is
+   **attributed to the one class where that student had the most lessons that
+   month**, ties going to the first class by name, then by id, so the same
+   month always resolves the same way. That class's *To bill* carries it, the
+   others do not, and the per-student summary is unaffected — it always shows
+   each student's own surcharge once. Every figure meant for an invoice
+   (per-class, per-student, per-company, and the Events amount picker) is
+   therefore inclusive of TBT; the lessons-only figure survives as
+   `month_total` for reconciliation.
 3. **Fee snapshotting.** Each lesson stores the class fee (and per-member
    shares) at the moment it is booked. Changing a class fee later affects only
    future lessons. This must never be broken.
@@ -302,12 +312,16 @@ Read-only; recomputed from `mmr_lessons` for any requested month. Month picker
 (prev / next / month jumper) defaults to the current month.
 
 **Per-class table** — one row per class with ≥1 lesson:
-Class | Client type | Company | Settle method | Lessons | Rate (snapshot) | Class total | Members.
-*Class total = Σ fee_snapshot* (one-off overrides therefore respected).
-Company shows the linked company name (blank for private students). Expanding a
-row shows the per-student breakdown: each member's share per lesson (explicit
+Class | Client type | Company | Settle method | Lessons | Rate (snapshot) | To bill | Members.
+***To bill* = Σ `fee_snapshot` (so one-off overrides are respected) + the TBT
+surcharges attributed to that class (§3.2).** When a surcharge is included the
+cell says `incl. TBT 25,00 zł` under the figure, so a total the lesson rates
+alone cannot explain never looks like an error. Company shows the linked
+company name (blank for private students). Expanding a row shows the
+per-student breakdown: each member's share per lesson (explicit
 `share_per_lesson` or equal split), summed for the month, plus that student's
-TBT surcharge. Footer: month total.
+TBT surcharge where this is the class carrying it. Footer: month total, on the
+same *to bill* basis.
 
 **Per-student summary** — the table actually used when issuing KSeF invoices:
 Student | Company | Lessons | Lesson total | TBT surcharge | **To bill**. Company
@@ -391,10 +405,12 @@ step months. It lists three groups
 built by `MMR_Data::event_suggestions()` from `MMR_Data::settlement()` — which
 it reads and never modifies:
 
-- **Classes** — `class_total` (lesson fees only; the class is what gets
-  invoiced), detail = lesson count + rates used.
+- **Classes** — `to_bill`: the class's lessons **plus the TBT surcharges
+  attributed to it** (§3.2), because the class is what gets invoiced and the
+  surcharge must not need remembering. Detail = lesson count + rates used, and
+  the surcharge named when there is one.
 - **Students** — `to_bill` (lesson shares + the TBT surcharge, once a month).
-- **Companies** — Σ `class_total` of that company's classes this month, with
+- **Companies** — Σ `to_bill` of that company's classes this month, with
   the rolled-up classes named in the detail so it is never an opaque number.
 
 `Use` fills Amount and the hidden `source_*` fields, then closes the panel. A
@@ -578,7 +594,12 @@ members) and lessons; the fee printed in the source sheet becomes
       per-student "to bill" summary, with copy + CSV export.
 - [ ] A 4-member group with fee 200 and no explicit shares shows 50 zł/lesson/member.
 - [ ] A student with tbt_monthly_fee 25 and lessons in two classes is billed
-      the surcharge once.
+      the surcharge once — once in the per-student summary, and once across the
+      two class rows (on the class with more lessons, not on both).
+- [ ] A 1-on-1 student with tbt_monthly_fee 25 and four lessons at 150 shows
+      625 zł as the class's To bill, in the month total, in the per-student
+      summary and in the Events amount picker — the surcharge never has to be
+      added by hand.
 - [ ] Calendar fills the full admin content width at 1280/1440/1920/2560 px,
       menu folded and unfolded, with no horizontal scrollbar.
 - [ ] No form control overflows any modal at any of those widths.
@@ -591,8 +612,10 @@ members) and lessons; the fee printed in the source sheet becomes
       a fresh install and an upgrade end with the same schema.
 - [ ] `legacy_keys()` does not contain `events`; `all_keys()` and `is_empty()`
       do.
-- [ ] The Settlement page's markup and numbers are unchanged, and
-      `MMR_Data::settlement()` has no key added, renamed or removed.
+- [ ] Adding the Events page changed nothing on Settlement. *(v2.3 does change
+      it, on purpose: `settlement()` gains `tbt_total` / `to_bill` per class and
+      `month_to_bill`, so the TBT surcharge reaches the per-class figures —
+      see §3.2. Nothing is renamed or removed.)*
 - [ ] Taking a class suggestion fills Who, Amount and Type in one click, with
       no typing.
 

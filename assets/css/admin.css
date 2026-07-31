@@ -164,6 +164,9 @@
 }
 .mmr-settlement .mmr-pill--good .mmr-pill-value { color: var(--mmr-good); }
 
+/* The TBT surcharge folded into a class's To bill figure, named under it. */
+.mmr-incl-tbt { display: block; font-weight: 400; }
+
 .mmr-settle-filterbar { margin: 8px 0 0; }
 .mmr-settle-filterbar input[type="search"] { width: 320px; max-width: 100%; }
 /* Filtered-out rows use a class rather than [hidden], so the split-row
