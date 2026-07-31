@@ -17,10 +17,12 @@ build step.**
 - **Fee snapshotting** — each lesson stores its own fee (and member shares) at
   booking time, so changing a class fee never rewrites history.
 - **Settlement** — a read-only monthly report computed entirely from lessons:
-  one row per class (with company, expandable per-student splits and TBT
-  monthly surcharges) plus the per-student **"to bill"** summary used when
-  issuing KSeF invoices, with a Company column and copy-to-clipboard / CSV
-  export. Nothing is stored; any month is reproducible.
+  one row per class (with company and expandable per-student splits) plus the
+  per-student **"to bill"** summary used when issuing KSeF invoices, with a
+  Company column and copy-to-clipboard / CSV export. Every *to bill* figure —
+  per class, per student, and the one the Events picker offers — includes each
+  student's monthly TBT surcharge, counted once, so it never has to be added by
+  hand. Nothing is stored; any month is reproducible.
 - **Events** — the receivables register: every document issued (invoice /
   revolut / cash) with KSEF · SENT · PAID ticks you flip inline, a payment date
   and a year-scoped **Outstanding** total. A document starts with **Who** — one

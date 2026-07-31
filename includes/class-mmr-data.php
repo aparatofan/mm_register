@@ -705,11 +705,14 @@ class MMR_Data {
 	 *     classes       => one row per class with >=1 lesson: class_id,
 	 *                      class_name, client_type, settle_method, company,
 	 *                      lesson_count, fees_used, class_total (Σ fee_snapshot),
+	 *                      tbt_total (surcharges attributed to this class),
+	 *                      to_bill (class_total + tbt_total — what to invoice),
 	 *                      members (per-student breakdown incl. TBT),
 	 *     students      => per-student summary: student_id, name, company,
 	 *                      lessons, lesson_total, tbt (added once per month),
 	 *                      to_bill,
 	 *     month_total   => Σ class totals (lesson fees only),
+	 *     month_to_bill => Σ class to_bill (lesson fees + TBT surcharges),
 	 *     to_bill_total => Σ per-student to_bill (lesson shares + TBT),
 	 * }
 	 */
@@ -796,13 +799,50 @@ class MMR_Data {
 			return isset( $student_rows[ $sid ] ) ? (float) $student_rows[ $sid ]->tbt_monthly_fee : 0.0;
 		};
 
+		// Which class carries each student's TBT surcharge this month.
+		//
+		// The surcharge is a flat monthly amount per student, charged once
+		// however many classes they attend (§3.2) — so it cannot simply be
+		// added to every class the student appears in. It is attributed to the
+		// class where they had the most lessons this month; ties go to the
+		// first class by name, then by id, so the same month always resolves
+		// the same way. Every class row below then bills the lessons plus
+		// whatever surcharges landed on it, and the per-student table still
+		// shows each student's own surcharge exactly once.
+		$tbt_class = array();
+		foreach ( array_keys( $per_student ) as $sid ) {
+			if ( $tbt_of( $sid ) <= 0 ) {
+				continue;
+			}
+			$best = null;
+			foreach ( $classes as $cid => $data ) {
+				if ( ! isset( $data['member_totals'][ $sid ] ) ) {
+					continue;
+				}
+				$lessons = (int) $data['member_totals'][ $sid ]['lessons'];
+				if ( null === $best
+					|| $lessons > $best['lessons']
+					|| ( $lessons === $best['lessons'] && strcmp( $data['class_name'], $best['name'] ) < 0 )
+					|| ( $lessons === $best['lessons'] && $data['class_name'] === $best['name'] && $cid < $best['id'] )
+				) {
+					$best = array( 'lessons' => $lessons, 'name' => $data['class_name'], 'id' => $cid );
+				}
+			}
+			if ( $best ) {
+				$tbt_class[ $sid ] = $best['id'];
+			}
+		}
+
 		// Per-class rows with member breakdown.
 		$class_rows = array();
 		$month_total = 0.0;
+		$month_to_bill = 0.0;
 		foreach ( $classes as $cid => $data ) {
 			$members = array();
+			$tbt_total = 0.0;
 			foreach ( $data['member_totals'] as $sid => $mt ) {
-				$tbt = $tbt_of( $sid );
+				$tbt = ( isset( $tbt_class[ $sid ] ) && $tbt_class[ $sid ] === $cid ) ? $tbt_of( $sid ) : 0.0;
+				$tbt_total += $tbt;
 				$members[] = array(
 					'student_id'   => $sid,
 					'student_name' => $name_of( $sid ),
@@ -817,9 +857,12 @@ class MMR_Data {
 			} );
 
 			$data['class_total'] = round( $data['class_total'], 2 );
+			$data['tbt_total'] = round( $tbt_total, 2 );
+			$data['to_bill'] = round( $data['class_total'] + $tbt_total, 2 );
 			$data['members'] = $members;
 			unset( $data['member_totals'] );
 			$month_total += $data['class_total'];
+			$month_to_bill += $data['to_bill'];
 			$class_rows[] = $data;
 		}
 
@@ -855,6 +898,7 @@ class MMR_Data {
 			'classes'       => $class_rows,
 			'students'      => $student_rows_out,
 			'month_total'   => round( $month_total, 2 ),
+			'month_to_bill' => round( $month_to_bill, 2 ),
 			'to_bill_total' => round( $to_bill_total, 2 ),
 		);
 	}
@@ -1536,7 +1580,10 @@ class MMR_Data {
 		$report = self::settlement( $period );
 		$billed = self::events_by_source( $period );
 
-		// Classes — the class is what gets invoiced, so lesson fees only.
+		// Classes — the class is what gets invoiced, so the suggestion is what
+		// that class is owed for the month: its lessons plus the TBT
+		// surcharges attributed to it. The detail names the surcharge, so the
+		// figure is never a number the lesson rates alone cannot explain.
 		$companies = array();
 		foreach ( $report['classes'] as $row ) {
 			$fee_parts = array();
@@ -1549,10 +1596,14 @@ class MMR_Data {
 				number_format_i18n( (int) $row['lesson_count'] ),
 				implode( ', ', $fee_parts )
 			);
+			if ( $row['tbt_total'] > 0 ) {
+				/* translators: %s: TBT monthly surcharge. */
+				$detail .= ' · ' . sprintf( __( 'TBT %s', 'mm-register' ), mmr_money( $row['tbt_total'] ) );
+			}
 			$hint = self::event_type_hint( $row['settle_method'] );
 
-			if ( $row['class_total'] > 0 ) {
-				$out['classes'][] = self::event_suggestion( 'class', $row['class_id'], $row['class_name'], $row['class_total'], $detail, $hint, $billed, (string) $row['settle_method'] );
+			if ( $row['to_bill'] > 0 ) {
+				$out['classes'][] = self::event_suggestion( 'class', $row['class_id'], $row['class_name'], $row['to_bill'], $detail, $hint, $billed, (string) $row['settle_method'] );
 			}
 
 			$company = trim( (string) $row['company'] );
@@ -1562,8 +1613,8 @@ class MMR_Data {
 			if ( ! isset( $companies[ $company ] ) ) {
 				$companies[ $company ] = array( 'total' => 0.0, 'classes' => array(), 'hints' => array() );
 			}
-			$companies[ $company ]['total'] += (float) $row['class_total'];
-			$companies[ $company ]['classes'][] = $row['class_name'] . ' (' . mmr_money( $row['class_total'] ) . ')';
+			$companies[ $company ]['total'] += (float) $row['to_bill'];
+			$companies[ $company ]['classes'][] = $row['class_name'] . ' (' . mmr_money( $row['to_bill'] ) . ')';
 			$companies[ $company ]['hints'][ $hint ] = true;
 		}
 
