@@ -219,9 +219,11 @@
 	}
 
 	function recomputeTotals( cal ) {
-		var oldWeek = parseFloat( cal.getAttribute( 'data-week-total' ) || '0' );
 		var weekTotal = 0;
 		var lessonCount = 0;
+		// Each day column's money also lands in the bucket for its own month,
+		// so a week straddling a boundary keeps the two months apart.
+		var monthSlices = {};
 		cal.querySelectorAll( '.mmr-col' ).forEach( function ( col ) {
 			var dayTotal = 0;
 			col.querySelectorAll( '.mmr-slot.is-filled' ).forEach( function ( slot ) {
@@ -230,6 +232,8 @@
 			} );
 			var dayEl = col.querySelector( '.mmr-day-total' );
 			if ( dayEl ) { dayEl.textContent = formatMoney( dayTotal ); }
+			var period = ( col.getAttribute( 'data-date' ) || '' ).slice( 0, 7 );
+			monthSlices[ period ] = ( monthSlices[ period ] || 0 ) + dayTotal;
 			weekTotal += dayTotal;
 		} );
 		var weekEl = document.getElementById( 'mmr-week-total' );
@@ -238,14 +242,15 @@
 		var countEl = document.getElementById( 'mmr-lesson-count' );
 		if ( countEl ) { countEl.textContent = String( lessonCount ); }
 
-		var monthEl = document.getElementById( 'mmr-month-total' );
-		if ( monthEl ) {
-			var monthBase = parseFloat( cal.getAttribute( 'data-month-total' ) || '0' );
-			monthBase += ( weekTotal - oldWeek );
-			cal.setAttribute( 'data-month-total', String( monthBase ) );
-			monthEl.textContent = formatMoney( monthBase );
-		}
-		cal.setAttribute( 'data-week-total', String( weekTotal ) );
+		// Month badge = the rest of that month (fixed server-side at render
+		// time) + this week's live slice of it. Rebuilt from the base rather
+		// than nudged by a delta, so a lesson booked on 1.09 moves September
+		// and never August.
+		cal.querySelectorAll( '.mmr-month-total' ).forEach( function ( monthEl ) {
+			var period = monthEl.getAttribute( 'data-period' ) || '';
+			var base = parseFloat( monthEl.getAttribute( 'data-month-base' ) || '0' );
+			monthEl.textContent = formatMoney( base + ( monthSlices[ period ] || 0 ) );
+		} );
 
 		updatePillStatus( weekTotal, lessonCount );
 	}
@@ -486,16 +491,6 @@
 		var cal = document.getElementById( 'mmr-calendar' );
 		if ( ! cal ) { return; }
 
-		// Seed month base so incremental deltas work.
-		var monthEl = document.getElementById( 'mmr-month-total' );
-		var weekEl = document.getElementById( 'mmr-week-total' );
-		if ( weekEl ) {
-			cal.setAttribute( 'data-week-total', String( parseMoney( weekEl.textContent ) ) );
-		}
-		if ( monthEl ) {
-			cal.setAttribute( 'data-month-total', String( parseMoney( monthEl.textContent ) ) );
-		}
-
 		function openSlot( slot ) {
 			if ( slot.classList.contains( 'is-empty' ) ) {
 				openPicker( slot, cal );
@@ -572,10 +567,6 @@
 			var todayTab = cal.querySelector( '.mmr-day-tab.is-today' );
 			activateDay( todayTab ? todayTab.getAttribute( 'data-day' ) : '0' );
 		}
-	}
-
-	function parseMoney( text ) {
-		return parseFloat( String( text ).replace( /[^\d,-]/g, '' ).replace( ',', '.' ) ) || 0;
 	}
 
 	function nextWeek( monday ) {

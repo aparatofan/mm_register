@@ -42,8 +42,30 @@ foreach ( $lessons as $lesson ) {
 	$week_total += (float) $lesson->fee_snapshot;
 	$week_count++;
 }
-$month_period = wp_date( 'Y-m', $monday_ts );
-$month_total = MMR_Data::month_actual_revenue( $month_period );
+// Month totals are grouped by each lesson's own date, never by the displayed
+// week or by the week's start month. A week straddling a month boundary gets
+// one badge per month it touches; derive that list from the rendered days
+// rather than special-casing "one or two".
+$month_periods = array();
+foreach ( $days as $day ) {
+	$period = substr( $day['date'], 0, 7 );
+	if ( ! in_array( $period, $month_periods, true ) ) {
+		$month_periods[] = $period;
+	}
+}
+sort( $month_periods ); // `YYYY-MM` sorts lexicographically, i.e. chronologically.
+
+// Two numbers per month: the full calendar-month total, and the slice of it
+// that this week accounts for. JS needs the slice so a live edit can move the
+// badge for the edited lesson's own month and leave the other one alone.
+$month_totals      = array();
+$month_week_totals = array_fill_keys( $month_periods, 0.0 );
+foreach ( $month_periods as $period ) {
+	$month_totals[ $period ] = MMR_Data::month_actual_revenue( $period );
+}
+foreach ( $days as $day ) {
+	$month_week_totals[ substr( $day['date'], 0, 7 ) ] += $day_totals[ $day['date'] ];
+}
 
 // Conditional status for the two coloured pills (computed server-side).
 $week_status  = mmr_status_for_amount( $week_total );
@@ -85,9 +107,17 @@ $today = current_time( 'Y-m-d' );
 			<span class="mmr-pill mmr-pill--week mmr-pill--<?php echo esc_attr( $week_status ); ?>" id="mmr-week-pill" aria-label="<?php echo esc_attr( $week_aria ); ?>">
 				<span class="mmr-pill-label"><?php esc_html_e( 'Week', 'mm-register' ); ?>:</span> <strong class="mmr-pill-value" id="mmr-week-total"><?php echo mmr_money_esc( $week_total ); ?></strong>
 			</span>
-			<span class="mmr-pill mmr-pill--month" id="mmr-month-pill">
-				<span class="mmr-pill-label"><?php echo esc_html( mmr_period_label( $month_period ) ); ?>:</span> <strong class="mmr-pill-value" id="mmr-month-total"><?php echo mmr_money_esc( $month_total ); ?></strong>
-			</span>
+			<?php foreach ( $month_periods as $period ) : ?>
+				<?php
+				// data-month-base is the month total minus this week's share of
+				// it, so JS can rebuild the badge from a fixed number plus the
+				// live week slice instead of accumulating deltas.
+				$month_base = $month_totals[ $period ] - $month_week_totals[ $period ];
+				?>
+				<span class="mmr-pill mmr-pill--month" data-period="<?php echo esc_attr( $period ); ?>">
+					<span class="mmr-pill-label"><?php echo esc_html( mmr_period_label( $period ) ); ?>:</span> <strong class="mmr-pill-value mmr-month-total" data-period="<?php echo esc_attr( $period ); ?>" data-month-base="<?php echo esc_attr( number_format( $month_base, 2, '.', '' ) ); ?>"><?php echo mmr_money_esc( $month_totals[ $period ] ); ?></strong>
+				</span>
+			<?php endforeach; ?>
 		</div>
 	</div>
 
