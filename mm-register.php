@@ -3,7 +3,7 @@
  * Plugin Name:       TBT Register
  * Plugin URI:        https://mariuszmirecki.pl/
  * Description:       Private back-office register for NET ENGLISH: weekly lesson calendar, students / classes / companies database, a computed monthly settlement report and a register of issued documents with paid/unpaid tracking. No front-end output.
- * Version:           2.6.2
+ * Version:           2.6.3
  * Requires at least: 6.0
  * Requires PHP:      8.1
  * Author:            Mariusz Mirecki
@@ -50,7 +50,7 @@ if ( ! function_exists( 'tbt_is_owner' ) ) {
 	}
 }
 
-define( 'MMR_VERSION', '2.6.2' );
+define( 'MMR_VERSION', '2.6.3' );
 
 /** Stored in the mmr_db_version option; bumping it triggers the upgrade routine. */
 define( 'MMR_DB_VERSION', '2.3' );

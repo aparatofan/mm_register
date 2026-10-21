@@ -237,14 +237,27 @@ if ( $company_filter ) {
 					<div id="mmr-members-rows"></div>
 					<p><button type="button" class="button" id="mmr-add-member"><?php esc_html_e( '+ Add member', 'mm-register' ); ?></button></p>
 
+					<?php
+					// Students offered by the type-to-search member field. The posted
+					// value is still the hidden student id; the visible box only finds it.
+					$member_students = array();
+					foreach ( $all_active_students as $s ) {
+						$member_students[] = array(
+							'id'    => (int) $s->id,
+							'name'  => $s->name,
+							'email' => (string) $s->email,
+						);
+					}
+					?>
+					<script type="application/json" id="mmr-member-students"><?php echo wp_json_encode( $member_students ); ?></script>
+
 					<template id="mmr-member-row-template">
 						<div class="mmr-member-row">
-							<select name="member_student_id[]" class="mmr-member-select">
-								<option value="0">—</option>
-								<?php foreach ( $all_active_students as $s ) : ?>
-									<option value="<?php echo esc_attr( $s->id ); ?>"><?php echo esc_html( $s->name ); ?></option>
-								<?php endforeach; ?>
-							</select>
+							<div class="mmr-member-picker">
+								<input type="text" class="mmr-member-search" autocomplete="off" aria-label="<?php esc_attr_e( 'Student', 'mm-register' ); ?>" placeholder="<?php esc_attr_e( 'Type a student’s name…', 'mm-register' ); ?>">
+								<input type="hidden" name="member_student_id[]" class="mmr-member-id" value="0">
+								<div class="mmr-who-results mmr-member-results" hidden></div>
+							</div>
 							<input type="text" name="member_share[]" class="mmr-member-share" inputmode="decimal" placeholder="<?php esc_attr_e( 'equal', 'mm-register' ); ?>">
 							<button type="button" class="button-link mmr-remove-member" aria-label="<?php esc_attr_e( 'Remove member', 'mm-register' ); ?>">✕</button>
 						</div>
