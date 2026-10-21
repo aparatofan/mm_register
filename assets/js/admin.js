@@ -138,13 +138,19 @@
 		var rows = modal.querySelector( '#mmr-members-rows' );
 		if ( ! tpl || ! rows ) { return; }
 		var frag = tpl.content.cloneNode( true );
+		var search = frag.querySelector( '.mmr-member-search' );
 		if ( member ) {
-			var select = frag.querySelector( '.mmr-member-select' );
+			var idField = frag.querySelector( '.mmr-member-id' );
 			var share = frag.querySelector( '.mmr-member-share' );
-			if ( select ) { select.value = member.student_id; }
+			// The name comes with the saved member, so an archived student who
+			// is no longer offered in the list still shows and is kept on save.
+			if ( idField ) { idField.value = member.student_id; }
+			if ( search ) { search.value = member.name || ''; }
 			if ( share ) { share.value = ( member.share === null || member.share === '' ) ? '' : member.share; }
 		}
 		rows.appendChild( frag );
+		// A row added by hand is for typing into straight away.
+		if ( ! member && search ) { search.focus(); }
 	}
 
 	function populateMembers( modal, members ) {
@@ -166,6 +172,218 @@
 				if ( row ) { row.remove(); }
 			}
 		} );
+		initMemberSearch();
+	}
+
+	/* ---------------------------------------------------------------
+	 * Class members — type-to-search student field. The visible box only
+	 * finds a student; the hidden member_student_id[] input is what posts,
+	 * exactly as the old <select> did, so saving is unchanged.
+	 * ------------------------------------------------------------- */
+
+	// Lower-case and fold Polish diacritics, so "lukasz" finds "Łukasz".
+	function foldText( text ) {
+		return String( text || '' )
+			.toLowerCase()
+			.replace( /ł/g, 'l' )
+			.normalize( 'NFD' )
+			.replace( /[̀-ͯ]/g, '' );
+	}
+
+	function initMemberSearch() {
+		var dataNode = document.getElementById( 'mmr-member-students' );
+		var rowsBox = document.getElementById( 'mmr-members-rows' );
+		if ( ! dataNode || ! rowsBox ) { return; }
+		var students = [];
+		try { students = JSON.parse( dataNode.textContent ) || []; } catch ( err ) { students = []; }
+		students.forEach( function ( s ) {
+			s.id = Number( s.id );
+			s.key = foldText( s.name );
+			s.emailKey = foldText( s.email );
+		} );
+
+		var form = rowsBox.closest( 'form' );
+		var activeIndex = -1;
+
+		function parts( row ) {
+			return {
+				search: row.querySelector( '.mmr-member-search' ),
+				id: row.querySelector( '.mmr-member-id' ),
+				box: row.querySelector( '.mmr-member-results' )
+			};
+		}
+
+		// Ids already picked in the other rows — no point offering them twice.
+		function takenIds( exceptRow ) {
+			var ids = [];
+			rowsBox.querySelectorAll( '.mmr-member-row' ).forEach( function ( row ) {
+				if ( row === exceptRow ) { return; }
+				var id = Number( parts( row ).id.value );
+				if ( id ) { ids.push( id ); }
+			} );
+			return ids;
+		}
+
+		function matches( term, exceptRow ) {
+			var words = foldText( term ).split( /\s+/ ).filter( Boolean );
+			var taken = takenIds( exceptRow );
+			var found = students.filter( function ( s ) {
+				if ( taken.indexOf( s.id ) >= 0 ) { return false; }
+				return words.every( function ( w ) {
+					return s.key.indexOf( w ) >= 0 || ( s.emailKey && s.emailKey.indexOf( w ) >= 0 );
+				} );
+			} );
+			// Names that start with what was typed come first; the rest keep A–Z.
+			if ( words.length ) {
+				var first = words[ 0 ];
+				found.sort( function ( a, b ) {
+					var aw = a.key.split( /\s+/ ).some( function ( p ) { return p.indexOf( first ) === 0; } ) ? 0 : 1;
+					var bw = b.key.split( /\s+/ ).some( function ( p ) { return p.indexOf( first ) === 0; } ) ? 0 : 1;
+					return aw - bw;
+				} );
+			}
+			return found;
+		}
+
+		function hide( row ) {
+			var p = parts( row );
+			p.box.hidden = true;
+			p.box.textContent = '';
+			activeIndex = -1;
+		}
+
+		function hideAll( exceptRow ) {
+			rowsBox.querySelectorAll( '.mmr-member-row' ).forEach( function ( row ) {
+				if ( row !== exceptRow ) { hide( row ); }
+			} );
+		}
+
+		function pick( row, student ) {
+			var p = parts( row );
+			p.id.value = String( student.id );
+			p.search.value = student.name;
+			p.search.setCustomValidity( '' );
+			hide( row );
+			var share = row.querySelector( '.mmr-member-share' );
+			if ( share ) { share.focus(); }
+		}
+
+		function highlight( row ) {
+			var items = parts( row ).box.querySelectorAll( '.mmr-picker-item' );
+			items.forEach( function ( item, i ) {
+				item.classList.toggle( 'is-active', i === activeIndex );
+			} );
+			if ( items[ activeIndex ] ) { items[ activeIndex ].scrollIntoView( { block: 'nearest' } ); }
+		}
+
+		function show( row ) {
+			var p = parts( row );
+			hideAll( row );
+			p.box.textContent = '';
+			activeIndex = -1;
+			var found = matches( p.search.value, row );
+			if ( ! found.length ) {
+				p.box.appendChild( el( 'div', { 'class': 'mmr-picker-empty' }, i18n.noStudents || 'No matching students' ) );
+				p.box.hidden = false;
+				return;
+			}
+			found.forEach( function ( student ) {
+				var item = el( 'div', { 'class': 'mmr-picker-item' } );
+				var text = el( 'span', { 'class': 'mmr-pi-text' } );
+				text.appendChild( el( 'span', { 'class': 'mmr-pi-name' }, student.name ) );
+				// Enough to tell two students with the same name apart.
+				if ( student.email ) { text.appendChild( el( 'span', { 'class': 'mmr-pi-meta' }, student.email ) ); }
+				item.appendChild( text );
+				item.addEventListener( 'mousedown', function ( e ) {
+					e.preventDefault();
+					pick( row, student );
+				} );
+				p.box.appendChild( item );
+			} );
+			p.box.hidden = false;
+			// With something typed, Enter takes the top suggestion.
+			if ( p.search.value.trim() ) {
+				activeIndex = 0;
+				highlight( row );
+			}
+		}
+
+		// Typing invalidates the earlier pick until a student is chosen again.
+		rowsBox.addEventListener( 'input', function ( e ) {
+			if ( ! e.target.classList.contains( 'mmr-member-search' ) ) { return; }
+			var row = e.target.closest( '.mmr-member-row' );
+			var p = parts( row );
+			p.id.value = '0';
+			p.search.setCustomValidity( '' );
+			show( row );
+		} );
+
+		// Focus alone opens the list, as on the Events "Who" field.
+		rowsBox.addEventListener( 'focusin', function ( e ) {
+			if ( ! e.target.classList.contains( 'mmr-member-search' ) ) { return; }
+			var row = e.target.closest( '.mmr-member-row' );
+			if ( '0' === parts( row ).id.value ) { show( row ); }
+		} );
+
+		// Leaving the box: an exact, unambiguous name still counts as a pick.
+		rowsBox.addEventListener( 'focusout', function ( e ) {
+			if ( ! e.target.classList.contains( 'mmr-member-search' ) ) { return; }
+			var row = e.target.closest( '.mmr-member-row' );
+			var p = parts( row );
+			hide( row );
+			if ( '0' !== p.id.value || ! p.search.value.trim() ) { return; }
+			var typed = foldText( p.search.value.trim() );
+			var exact = students.filter( function ( s ) { return s.key === typed; } );
+			if ( 1 === exact.length && takenIds( row ).indexOf( exact[ 0 ].id ) < 0 ) {
+				p.id.value = String( exact[ 0 ].id );
+				p.search.value = exact[ 0 ].name;
+			}
+		} );
+
+		rowsBox.addEventListener( 'keydown', function ( e ) {
+			if ( ! e.target.classList.contains( 'mmr-member-search' ) ) { return; }
+			var row = e.target.closest( '.mmr-member-row' );
+			var p = parts( row );
+			var open = ! p.box.hidden;
+			var items = p.box.querySelectorAll( '.mmr-picker-item' );
+			if ( 'ArrowDown' === e.key || 'ArrowUp' === e.key ) {
+				e.preventDefault();
+				if ( ! open ) { show( row ); return; }
+				if ( ! items.length ) { return; }
+				activeIndex += ( 'ArrowDown' === e.key ) ? 1 : -1;
+				if ( activeIndex < 0 ) { activeIndex = items.length - 1; }
+				if ( activeIndex >= items.length ) { activeIndex = 0; }
+				highlight( row );
+			} else if ( 'Enter' === e.key ) {
+				// Enter in this box picks a student; it never submits the class.
+				e.preventDefault();
+				if ( open && items[ activeIndex ] ) {
+					items[ activeIndex ].dispatchEvent( new MouseEvent( 'mousedown', { bubbles: true, cancelable: true } ) );
+				}
+			} else if ( 'Escape' === e.key && open ) {
+				// First Escape closes the list, not the whole modal.
+				e.stopPropagation();
+				hide( row );
+			}
+		} );
+
+		// Text that never became a student would otherwise be dropped silently
+		// on save, so the browser blocks the save and says why.
+		if ( form ) {
+			form.addEventListener( 'submit', function ( e ) {
+				var bad = null;
+				rowsBox.querySelectorAll( '.mmr-member-row' ).forEach( function ( row ) {
+					var p = parts( row );
+					var unresolved = p.search.value.trim() && '0' === p.id.value;
+					p.search.setCustomValidity( unresolved ? ( i18n.pickStudent || 'Pick a student from the list.' ) : '' );
+					if ( unresolved && ! bad ) { bad = p.search; }
+				} );
+				if ( bad ) {
+					e.preventDefault();
+					bad.reportValidity();
+				}
+			} );
+		}
 	}
 
 	/* ---------------------------------------------------------------

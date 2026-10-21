@@ -778,6 +778,8 @@
 	margin: 0;
 }
 .mmr-member-row--head { font-size: 12px; font-weight: 600; color: var(--mmr-muted); margin-bottom: 4px; }
+.mmr-member-picker { position: relative; min-width: 0; }
+.mmr-member-picker .mmr-member-search { width: 100%; max-width: 100%; box-sizing: border-box; margin: 0; }
 
 @media (max-width: 640px) {
 	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }

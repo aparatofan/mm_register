@@ -209,6 +209,8 @@ class MMR_Plugin {
 					'archived'      => __( 'archived', 'mm-register' ),
 					/* translators: %s: class name. */
 					'removeClass'   => __( 'Remove %s', 'mm-register' ),
+					'noStudents'    => __( 'No matching students', 'mm-register' ),
+					'pickStudent'   => __( 'Pick a student from the list.', 'mm-register' ),
 				),
 			)
 		);
