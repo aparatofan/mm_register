@@ -246,6 +246,7 @@ class MMR_Ajax {
 				'ksef'              => (int) $event->ksef,
 				'sent'              => (int) $event->sent,
 				'paid'              => (int) $event->paid,
+				'is_draft'          => (int) $event->is_draft,
 				'paid_date'         => (string) $event->paid_date,
 				'paid_date_display' => mmr_date_label( $event->paid_date ),
 			),

@@ -23,8 +23,18 @@ build step.**
   per class, per student, and the one the Events picker offers — includes each
   student's monthly TBT surcharge, counted once, so it never has to be added by
   hand. Nothing is stored; any month is reproducible.
+
+  **Draft events (2.7).** Each billable line — a class, or each member of a
+  class with *Members pay separately* — gets an **Event** column: its status
+  chip, or a *Create event* button. Tick lines with the same payer and settle
+  method to *Combine into one event*, or use *Create drafts for remaining* for
+  the whole month. New events start as **drafts**: refreshable to the current
+  settlement and left out of the Events totals until issued (invoice number
+  typed in Events, Revolut request sent, cash received, rozliczenie confirmed).
+  Once issued an amount never changes; if the settlement moves the row warns
+  instead. The figures themselves are unchanged — lines read the report.
 - **Events** — the receivables register: every document issued (invoice /
-  revolut / cash) with KSEF · SENT · PAID ticks you flip inline, a payment date
+  revolut / cash / rozliczenie) with KSEF · SENT · PAID ticks you flip inline, a payment date
   and a year-scoped **Outstanding** total. A document starts with **Who** — one
   or more classes, picked as chips straight from the register, plus free text
   for a payer with no class on record — and its **Type** is then derived from

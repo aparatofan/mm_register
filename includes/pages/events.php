@@ -65,9 +65,11 @@ $type_labels = array(
 	'invoice' => __( 'invoice', 'mm-register' ),
 	'revolut' => __( 'revolut', 'mm-register' ),
 	'cash'    => __( 'cash', 'mm-register' ),
+	'rozliczenie' => __( 'rozliczenie', 'mm-register' ),
 );
 $state_labels = array(
 	'all'     => __( 'All statuses', 'mm-register' ),
+	'draft'   => __( 'Drafts', 'mm-register' ),
 	'unpaid'  => __( 'Unpaid', 'mm-register' ),
 	'paid'    => __( 'Paid', 'mm-register' ),
 	'unsent'  => __( 'Not sent', 'mm-register' ),
@@ -220,6 +222,10 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 			<?php foreach ( $events as $event ) :
 				$is_invoice = ( 'invoice' === $event->type );
 				$is_paid = (bool) $event->paid;
+				$is_draft = (bool) $event->is_draft;
+				// Rozliczenie draws down a prepayment: never sent, never paid.
+				$is_rozliczenie = ( 'rozliczenie' === $event->type );
+				$is_receivable = ! $is_draft && ! $is_rozliczenie;
 				$classes_of_event = isset( $event_classes[ (int) $event->id ] ) ? $event_classes[ (int) $event->id ] : array();
 				// A pre-2.3 event has no classes and no free-text field — its
 				// whole "who" is the label. Show that label in the free-text
@@ -245,6 +251,7 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 					'source_kind'   => (string) $event->source_kind,
 					'source_id'     => (int) $event->source_id,
 					'source_period' => (string) $event->source_period,
+					'is_draft'      => (int) $event->is_draft,
 				) );
 				$delete_confirm = sprintf(
 					/* translators: 1: payer label, 2: amount. */
@@ -253,10 +260,15 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 					mmr_money( $event->amount )
 				);
 				?>
-				<tr class="mmr-event-row<?php echo $is_paid ? '' : ' mmr-event--unpaid'; ?>" data-id="<?php echo esc_attr( $event->id ); ?>">
+				<tr class="mmr-event-row<?php echo ( $is_paid || ! $is_receivable ) ? '' : ' mmr-event--unpaid'; ?>" data-id="<?php echo esc_attr( $event->id ); ?>" data-type="<?php echo esc_attr( $event->type ); ?>">
 					<td><?php echo esc_html( isset( $type_labels[ $event->type ] ) ? $type_labels[ $event->type ] : $event->type ); ?></td>
 					<td><span class="mmr-ellipsis" title="<?php echo esc_attr( $event->doc_number ); ?>"><?php echo esc_html( $event->doc_number ); ?></span></td>
-					<td><?php echo esc_html( mmr_date_label( $event->issue_date ) ); ?></td>
+					<td>
+						<?php echo esc_html( mmr_date_label( $event->issue_date ) ); ?>
+						<?php if ( $is_draft ) : ?>
+							<span class="mmr-status-chip mmr-status-chip--draft mmr-draft-chip"><?php esc_html_e( 'Draft', 'mm-register' ); ?></span>
+						<?php endif; ?>
+					</td>
 					<td><strong class="mmr-ellipsis" title="<?php echo esc_attr( $event->payer_label ); ?>"><?php echo esc_html( $event->payer_label ); ?></strong></td>
 					<td class="mmr-num"><strong><?php echo mmr_money_esc( $event->amount ); ?></strong></td>
 					<td class="mmr-check-cell">
@@ -267,6 +279,10 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 							<span class="mmr-muted" title="<?php esc_attr_e( 'KSeF applies to invoices only', 'mm-register' ); ?>">—</span>
 						<?php endif; ?>
 					</td>
+					<?php if ( $is_rozliczenie ) : ?>
+						<td class="mmr-check-cell"><span class="mmr-muted" title="<?php esc_attr_e( 'A rozliczenie is never sent', 'mm-register' ); ?>">—</span></td>
+						<td class="mmr-check-cell"><span class="mmr-muted" title="<?php esc_attr_e( 'A rozliczenie is never paid — it records prepaid lessons', 'mm-register' ); ?>">—</span></td>
+					<?php else : ?>
 					<td class="mmr-check-cell">
 						<input type="checkbox" class="mmr-event-flag" data-flag="sent" <?php checked( (int) $event->sent, 1 ); ?>
 							aria-label="<?php echo esc_attr( sprintf( /* translators: %s: payer label. */ __( 'Sent — %s', 'mm-register' ), $event->payer_label ) ); ?>">
@@ -275,10 +291,11 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 						<input type="checkbox" class="mmr-event-flag" data-flag="paid" <?php checked( (int) $event->paid, 1 ); ?>
 							aria-label="<?php echo esc_attr( sprintf( /* translators: %s: payer label. */ __( 'Paid — %s', 'mm-register' ), $event->payer_label ) ); ?>">
 					</td>
+					<?php endif; ?>
 					<td class="mmr-event-paid-date"><?php echo esc_html( mmr_date_label( $event->paid_date ) ); ?></td>
 					<td><span class="mmr-ellipsis" title="<?php echo esc_attr( $event->notes ); ?>"><?php echo esc_html( $event->notes ); ?></span></td>
 					<td class="mmr-row-actions">
-						<button type="button" class="button button-small mmr-open-modal" data-modal="mmr-event-modal" data-json="<?php echo esc_attr( $json ); ?>"><?php esc_html_e( 'Edit', 'mm-register' ); ?></button>
+						<button type="button" class="button button-small mmr-open-modal mmr-event-edit" data-modal="mmr-event-modal" data-json="<?php echo esc_attr( $json ); ?>"><?php esc_html_e( 'Edit', 'mm-register' ); ?></button>
 						<form method="post" class="mmr-inline-form" data-confirm="<?php echo esc_attr( $delete_confirm ); ?>">
 							<?php wp_nonce_field( 'mmr_form' ); ?>
 							<input type="hidden" name="mmr_action" value="delete_event">
@@ -360,9 +377,15 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 						</div>
 						<div class="mmr-field mmr-field--checks">
 							<span class="mmr-field-legend"><?php esc_html_e( 'Status', 'mm-register' ); ?></span>
-							<label class="mmr-check"><input type="checkbox" name="ksef" value="1" data-field="ksef" id="mmr-event-ksef"> <?php esc_html_e( 'KSEF', 'mm-register' ); ?></label>
-							<label class="mmr-check"><input type="checkbox" name="sent" value="1" data-field="sent"> <?php esc_html_e( 'SENT', 'mm-register' ); ?></label>
-							<label class="mmr-check"><input type="checkbox" name="paid" value="1" data-field="paid" id="mmr-event-paid"> <?php esc_html_e( 'PAID', 'mm-register' ); ?></label>
+							<?php /* Read-only: a draft clears itself when a number is entered or Sent / Paid is ticked. */ ?>
+							<p class="mmr-event-draft-status" id="mmr-event-draft-status" hidden>
+								<span class="mmr-status-chip mmr-status-chip--draft"><?php esc_html_e( 'Draft', 'mm-register' ); ?></span>
+								<span class="mmr-muted mmr-small"><?php esc_html_e( 'Entering the document number (or ticking Sent / Paid) issues it.', 'mm-register' ); ?></span>
+							</p>
+							<p class="mmr-muted mmr-small" id="mmr-event-rozliczenie-note" hidden><?php esc_html_e( 'A rozliczenie records prepaid lessons used — no KSeF, sent or paid.', 'mm-register' ); ?></p>
+							<label class="mmr-check mmr-flag-ksef"><input type="checkbox" name="ksef" value="1" data-field="ksef" id="mmr-event-ksef"> <?php esc_html_e( 'KSEF', 'mm-register' ); ?></label>
+							<label class="mmr-check mmr-flag-sent"><input type="checkbox" name="sent" value="1" data-field="sent"> <?php esc_html_e( 'SENT', 'mm-register' ); ?></label>
+							<label class="mmr-check mmr-flag-paid"><input type="checkbox" name="paid" value="1" data-field="paid" id="mmr-event-paid"> <?php esc_html_e( 'PAID', 'mm-register' ); ?></label>
 						</div>
 						<div class="mmr-field mmr-field--full">
 							<label for="mmr-event-notes"><?php esc_html_e( 'Notes', 'mm-register' ); ?></label>

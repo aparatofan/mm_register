@@ -235,6 +235,8 @@ class MMR_Import {
 				'client_type'   => isset( $class['client_type'] ) ? sanitize_text_field( $class['client_type'] ) : '',
 				'settle_method' => isset( $class['settle_method'] ) ? sanitize_text_field( $class['settle_method'] ) : '',
 				'company_id'    => $company_id,
+				// Absent in v4 exports — 0 keeps the class billed as one line.
+				'pay_per_member' => empty( $class['pay_per_member'] ) ? 0 : 1,
 				'notes'         => isset( $class['notes'] ) ? sanitize_textarea_field( $class['notes'] ) : '',
 				'status'        => ( isset( $class['status'] ) && 'archived' === $class['status'] ) ? 'archived' : 'active',
 			) );
@@ -325,7 +327,7 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 4,
+			'version'        => 5,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
 			'companies'      => array(),
@@ -384,6 +386,7 @@ class MMR_Import {
 				'client_type'   => $c->client_type,
 				'company_ref'   => ( $c->company_id && isset( $company_ref[ (int) $c->company_id ] ) ) ? $company_ref[ (int) $c->company_id ] : null,
 				'settle_method' => $c->settle_method,
+				'pay_per_member' => (int) $c->pay_per_member,
 				'notes'         => $c->notes,
 				'status'        => $c->status,
 				'members'       => $members,
@@ -433,6 +436,8 @@ class MMR_Import {
 				'source_kind'   => $e->source_kind,
 				'source_id'     => ( null === $e->source_id ) ? null : (int) $e->source_id,
 				'source_period' => $e->source_period,
+				'is_draft'      => (int) $e->is_draft,
+				'lines_total'   => ( null === $e->lines_total ) ? null : (float) $e->lines_total,
 			);
 		}
 

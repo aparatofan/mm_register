@@ -272,10 +272,12 @@ class MMR_Data {
 			'client_type'   => $data['client_type'],
 			'settle_method' => $data['settle_method'],
 			'company_id'    => $company_id,
+			// Every writer (form, import, quick-add) goes through here; absent = 0.
+			'pay_per_member' => empty( $data['pay_per_member'] ) ? 0 : 1,
 			'notes'         => $data['notes'],
 			'status'        => $data['status'],
 		);
-		$formats = array( '%s', '%f', '%s', '%s', null === $company_id ? null : '%d', '%s', '%s' );
+		$formats = array( '%s', '%f', '%s', '%s', null === $company_id ? null : '%d', '%d', '%s', '%s' );
 
 		if ( $id ) {
 			$wpdb->update( $table, $row, array( 'id' => $id ), $formats, array( '%d' ) );
@@ -724,7 +726,7 @@ class MMR_Data {
 
 		$lessons = $wpdb->get_results( $wpdb->prepare(
 			"SELECT le.*, c.name AS class_name, c.client_type, c.settle_method,
-			        co.name AS company_name
+			        c.pay_per_member, co.name AS company_name
 			 FROM {$l} le
 			 JOIN {$c} c ON c.id = le.class_id
 			 LEFT JOIN {$co} co ON co.id = c.company_id
@@ -745,6 +747,8 @@ class MMR_Data {
 					'client_type'   => $lesson->client_type,
 					'settle_method' => $lesson->settle_method,
 					'company'       => $company,
+					// Billing switch only — no figure below depends on it.
+					'pay_per_member' => (int) $lesson->pay_per_member,
 					'lesson_count'  => 0,
 					'class_total'   => 0.0,
 					'fees_used'     => array(),
@@ -939,7 +943,9 @@ class MMR_Data {
 	 * @return string[]
 	 */
 	public static function event_types() {
-		return array( 'invoice', 'revolut', 'cash' );
+		// `rozliczenie` (2.7) records prepaid lessons drawn down — never money
+		// owed, so it has no KSeF / sent / paid and stays out of the totals.
+		return array( 'invoice', 'revolut', 'cash', 'rozliczenie' );
 	}
 
 	/**
@@ -948,7 +954,7 @@ class MMR_Data {
 	 * @return string[]
 	 */
 	public static function event_states() {
-		return array( 'all', 'unpaid', 'paid', 'unsent', 'no_ksef' );
+		return array( 'all', 'draft', 'unpaid', 'paid', 'unsent', 'no_ksef' );
 	}
 
 	/**
@@ -1184,7 +1190,10 @@ class MMR_Data {
 	 * Enforced here, not in the UI:
 	 * - `ksef` is an invoice-only fact — any other type forces it to 0;
 	 * - a paid event always has a payment date (today when none is given);
-	 * - an unpaid event never has one.
+	 * - an unpaid event never has one;
+	 * - `rozliczenie` is never money owed: ksef, sent and paid are forced to 0;
+	 * - auto-issue: a document number, or Sent / Paid ticked, clears `is_draft`
+	 *   — typing the invoice number in Events is the act of issuing a draft.
 	 *
 	 * @param array $data Raw fields from any source.
 	 * @return array Normalised row ready for the database.
@@ -1200,7 +1209,9 @@ class MMR_Data {
 			$issue_date = current_time( 'Y-m-d' );
 		}
 
-		$paid = empty( $data['paid'] ) ? 0 : 1;
+		$is_rozliczenie = ( 'rozliczenie' === $type );
+		$paid = ( $is_rozliczenie || empty( $data['paid'] ) ) ? 0 : 1;
+		$sent = ( $is_rozliczenie || empty( $data['sent'] ) ) ? 0 : 1;
 		$paid_date = isset( $data['paid_date'] ) ? trim( (string) $data['paid_date'] ) : '';
 		if ( ! mmr_valid_date( $paid_date ) ) {
 			$paid_date = '';
@@ -1225,21 +1236,40 @@ class MMR_Data {
 			$source_period = null;
 		}
 
+		$doc_number = isset( $data['doc_number'] ) ? sanitize_text_field( (string) $data['doc_number'] ) : '';
+
+		// Drafts (2.7): only the Settlement page creates them; every other
+		// writer either omits the flag (a real document) or replays the stored
+		// row. The auto-issue rule runs last so it applies to every source.
+		$is_draft = empty( $data['is_draft'] ) ? 0 : 1;
+		if ( '' !== trim( $doc_number ) || $sent || $paid ) {
+			$is_draft = 0;
+		}
+
+		// Drift baseline: NULL means "never checked" and must stay NULL — never
+		// coerce it to 0.00, which would flag every manual event as drifted.
+		$lines_total = null;
+		if ( isset( $data['lines_total'] ) && '' !== $data['lines_total'] ) {
+			$lines_total = number_format( mmr_sanitize_money( $data['lines_total'] ), 2, '.', '' );
+		}
+
 		return array(
 			'type'          => $type,
-			'doc_number'    => isset( $data['doc_number'] ) ? sanitize_text_field( (string) $data['doc_number'] ) : '',
+			'doc_number'    => $doc_number,
 			'issue_date'    => $issue_date,
 			'payer_label'   => isset( $data['payer_label'] ) ? sanitize_text_field( (string) $data['payer_label'] ) : '',
 			'who_text'      => isset( $data['who_text'] ) ? sanitize_text_field( (string) $data['who_text'] ) : '',
 			'amount'        => isset( $data['amount'] ) ? mmr_sanitize_money( $data['amount'] ) : 0.0,
 			'ksef'          => ( 'invoice' === $type && ! empty( $data['ksef'] ) ) ? 1 : 0,
-			'sent'          => empty( $data['sent'] ) ? 0 : 1,
+			'sent'          => $sent,
 			'paid'          => $paid,
 			'paid_date'     => $paid_date,
 			'notes'         => isset( $data['notes'] ) ? sanitize_textarea_field( (string) $data['notes'] ) : '',
 			'source_kind'   => '' === $source_kind ? null : $source_kind,
 			'source_id'     => $source_id ? $source_id : null,
 			'source_period' => $source_period,
+			'is_draft'      => $is_draft,
+			'lines_total'   => $lines_total,
 		);
 	}
 
@@ -1247,7 +1277,9 @@ class MMR_Data {
 	 * Build the shared WHERE clause for the events list and its totals, so a
 	 * chip can never be scoped differently from the rows below it.
 	 *
-	 * @param array $args year, type, state, search.
+	 * @param array $args year, type, state, search, and exclude_non_receivables
+	 *                    (totals only: drop drafts and rozliczenie, which are
+	 *                    never money issued or owed — the list still shows them).
 	 * @return array [ where sql, params ]
 	 */
 	protected static function event_where( $args ) {
@@ -1268,16 +1300,24 @@ class MMR_Data {
 			$params[] = $type;
 		}
 
+		if ( ! empty( $args['exclude_non_receivables'] ) ) {
+			$where .= " AND is_draft = 0 AND type <> 'rozliczenie'";
+		}
+
 		$state = isset( $args['state'] ) ? (string) $args['state'] : 'all';
 		switch ( $state ) {
+			case 'draft':
+				$where .= ' AND is_draft = 1';
+				break;
 			case 'unpaid':
-				$where .= ' AND paid = 0';
+				// A draft is not unpaid yet; a rozliczenie is never unpaid.
+				$where .= " AND paid = 0 AND is_draft = 0 AND type <> 'rozliczenie'";
 				break;
 			case 'paid':
 				$where .= ' AND paid = 1';
 				break;
 			case 'unsent':
-				$where .= ' AND sent = 0';
+				$where .= " AND sent = 0 AND is_draft = 0 AND type <> 'rozliczenie'";
 				break;
 			case 'no_ksef':
 				$where .= " AND type = 'invoice' AND ksef = 0";
@@ -1369,7 +1409,10 @@ class MMR_Data {
 
 		$row = self::normalize_event( $data );
 		$row['updated_at'] = $now;
-		$formats = array( '%s', '%s', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%s' );
+		// Positional, in normalize_event()'s key order, then updated_at.
+		// `lines_total` is %s so a NULL stays NULL (wpdb writes NULL for null
+		// values whatever the format) rather than becoming 0.00.
+		$formats = array( '%s', '%s', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%s' );
 
 		if ( $id ) {
 			$wpdb->update( $table, $row, array( 'id' => $id ), $formats, array( '%d' ) );
@@ -1431,6 +1474,8 @@ class MMR_Data {
 	public static function event_totals( $args = array() ) {
 		global $wpdb;
 		$table = MMR_DB::table( 'events' );
+		// Drafts and rozliczenie are listed but never counted as issued/owed.
+		$args['exclude_non_receivables'] = true;
 		list( $where, $params ) = self::event_where( $args );
 
 		$sql = "SELECT paid, COALESCE(SUM(amount),0) AS total FROM {$table} WHERE {$where} GROUP BY paid";
@@ -1476,7 +1521,7 @@ class MMR_Data {
 	 * derivation and the amount picker both go through it.
 	 *
 	 * @param string $method Free-text settle method.
-	 * @return string invoice|revolut|cash, or '' when it does not map.
+	 * @return string invoice|revolut|cash|rozliczenie, or '' when it does not map.
 	 */
 	public static function event_type_hint( $method ) {
 		$method = strtolower( trim( (string) $method ) );
@@ -1491,6 +1536,9 @@ class MMR_Data {
 		}
 		if ( false !== strpos( $method, 'cash' ) || false !== strpos( $method, 'gotówka' ) ) {
 			return 'cash';
+		}
+		if ( false !== strpos( $method, 'rozlicz' ) ) {
+			return 'rozliczenie';
 		}
 		return '';
 	}
@@ -1664,5 +1712,478 @@ class MMR_Data {
 			$out[ $group ] = $entries;
 		}
 		return $out;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Drafts from Settlement (2.7)
+	 *
+	 * A *billable line* is the smallest thing one payer pays for in a month:
+	 * normally a whole class, or one member of a class with "Members pay
+	 * separately" ticked. Line amounts are read from settlement() — never
+	 * recomputed here. An event *covers* a line when its source_period is the
+	 * month and its classes / source say so (see line_keys_for_event()).
+	 *
+	 * "One event per line" is a rule of this automation only: nothing in the
+	 * schema or the Events form stops a second event covering the same line,
+	 * so splitting one month across several documents keeps working.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Billable lines of a month, in the settlement table's order.
+	 *
+	 * @param string     $period Y-m.
+	 * @param array|null $report settlement() output, when the caller has it.
+	 * @return array List of line arrays (see the 2.7 spec §2.4 for the keys).
+	 */
+	public static function billable_lines( $period, $report = null ) {
+		$period = mmr_sanitize_period( $period );
+		if ( ! $period ) {
+			return array();
+		}
+		if ( null === $report ) {
+			$report = self::settlement( $period );
+		}
+
+		// settlement() carries the company name only; the payer key needs the ID.
+		$class_rows = self::classes_by_ids( wp_list_pluck( $report['classes'], 'class_id' ) );
+
+		$lines = array();
+		foreach ( $report['classes'] as $row ) {
+			$cid = (int) $row['class_id'];
+			$company_id = ( isset( $class_rows[ $cid ] ) && ! empty( $class_rows[ $cid ]->company_id ) ) ? (int) $class_rows[ $cid ]->company_id : 0;
+			$type = self::event_type_hint( $row['settle_method'] );
+			$base = array(
+				'period'        => $period,
+				'class_id'      => $cid,
+				'class_name'    => (string) $row['class_name'],
+				'company_id'    => $company_id,
+				'company'       => (string) $row['company'],
+				'settle_method' => (string) $row['settle_method'],
+				'type'          => $type,
+			);
+
+			$per_member = ! empty( $row['pay_per_member'] ) && count( $row['members'] ) >= 2;
+			if ( ! $per_member ) {
+				$line = array_merge( $base, array(
+					'key'          => (string) $cid,
+					'student_id'   => 0,
+					'name'         => (string) $row['class_name'],
+					'payer_key'    => $company_id ? 'company:' . $company_id : 'class:' . $cid,
+					'amount'       => round( (float) $row['to_bill'], 2 ),
+					'lesson_count' => (int) $row['lesson_count'],
+				) );
+				$line['ineligible_reason'] = self::line_ineligible_reason( $line );
+				$lines[] = $line;
+				continue;
+			}
+
+			foreach ( $row['members'] as $member ) {
+				$sid = (int) $member['student_id'];
+				$line = array_merge( $base, array(
+					'key'          => $cid . ':' . $sid,
+					'student_id'   => $sid,
+					'name'         => (string) $member['student_name'],
+					'payer_key'    => 'student:' . $sid,
+					'amount'       => round( (float) $member['total'], 2 ),
+					'lesson_count' => (int) $member['lessons'],
+				) );
+				$line['ineligible_reason'] = self::line_ineligible_reason( $line );
+				$lines[] = $line;
+			}
+		}
+		return $lines;
+	}
+
+	/**
+	 * Why a line cannot be drafted, or '' when it can.
+	 *
+	 * @param array $line Billable line.
+	 * @return string
+	 */
+	protected static function line_ineligible_reason( $line ) {
+		if ( '' === $line['type'] ) {
+			/* translators: %s: the class's settle method as typed. */
+			return sprintf( __( 'Settle method "%s" isn\'t recognised.', 'mm-register' ), $line['settle_method'] );
+		}
+		// KSeF needs a company; a member line bills the student, not a company.
+		if ( 'invoice' === $line['type'] && 0 === (int) $line['student_id'] && ! $line['company_id'] ) {
+			return __( 'No company on this class — set one before invoicing.', 'mm-register' );
+		}
+		if ( $line['amount'] <= 0 ) {
+			return __( 'Nothing to bill.', 'mm-register' );
+		}
+		return '';
+	}
+
+	/**
+	 * Line keys an event covers, from its source and its classes.
+	 *
+	 * - source_kind `student` → the member lines "{class}:{student}";
+	 * - source_kind `class` / `company` → the class lines "{class}".
+	 * Events without a source cover nothing (they are invisible here).
+	 *
+	 * @param object $event      Event row.
+	 * @param array  $class_list Its classes (event_classes_map() entries).
+	 * @return string[]
+	 */
+	public static function line_keys_for_event( $event, $class_list ) {
+		$keys = array();
+		$kind = (string) $event->source_kind;
+		foreach ( (array) $class_list as $class ) {
+			$cid = (int) $class['id'];
+			if ( 'student' === $kind ) {
+				$keys[] = $cid . ':' . (int) $event->source_id;
+			} elseif ( 'class' === $kind || 'company' === $kind ) {
+				$keys[] = (string) $cid;
+			}
+		}
+		return array_values( array_unique( $keys ) );
+	}
+
+	/**
+	 * Coverage for a month: line_key => events covering it, oldest first.
+	 * Each event row gets `line_keys` (every line it covers) attached.
+	 *
+	 * @param string $period Y-m.
+	 * @return array
+	 */
+	public static function events_for_period( $period ) {
+		global $wpdb;
+		$period = mmr_sanitize_period( $period );
+		if ( ! $period ) {
+			return array();
+		}
+		$table = MMR_DB::table( 'events' );
+		$events = $wpdb->get_results( $wpdb->prepare(
+			"SELECT * FROM {$table} WHERE source_period = %s ORDER BY id ASC",
+			$period
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		if ( empty( $events ) ) {
+			return array();
+		}
+		$classes = self::event_classes_map( wp_list_pluck( $events, 'id' ) );
+
+		$map = array();
+		foreach ( $events as $event ) {
+			$list = isset( $classes[ (int) $event->id ] ) ? $classes[ (int) $event->id ] : array();
+			$event->line_keys = self::line_keys_for_event( $event, $list );
+			foreach ( $event->line_keys as $key ) {
+				$map[ $key ][] = $event;
+			}
+		}
+		return $map;
+	}
+
+	/**
+	 * Create one draft event for a set of lines of one month.
+	 *
+	 * Validated here, never trusting the client: every key must be a current,
+	 * eligible, uncovered line, and all lines must share one type and payer.
+	 *
+	 * @param string   $period Y-m.
+	 * @param string[] $keys   Line keys.
+	 * @return int|WP_Error New event ID.
+	 */
+	public static function create_event_from_lines( $period, $keys ) {
+		$period = mmr_sanitize_period( $period );
+		$keys = array_values( array_unique( array_filter( array_map( 'strval', (array) $keys ) ) ) );
+		if ( ! $period || empty( $keys ) ) {
+			return new WP_Error( 'mmr_no_lines', __( 'Select at least one line.', 'mm-register' ) );
+		}
+
+		$by_key = array();
+		foreach ( self::billable_lines( $period ) as $line ) {
+			$by_key[ $line['key'] ] = $line;
+		}
+		$coverage = self::events_for_period( $period );
+
+		foreach ( $keys as $key ) {
+			if ( ! isset( $by_key[ $key ] ) ) {
+				return new WP_Error( 'mmr_unknown_line', __( 'One of the selected lines is no longer in this month\'s settlement. Reload the page and try again.', 'mm-register' ) );
+			}
+		}
+
+		// Walk the lines in settlement order (not click order), so the classes
+		// and the composed payer label always read the same way.
+		$lines = array();
+		foreach ( $by_key as $key => $line ) {
+			if ( ! in_array( (string) $key, $keys, true ) ) {
+				continue;
+			}
+			if ( '' !== $line['ineligible_reason'] ) {
+				return new WP_Error( 'mmr_ineligible', $line['name'] . ': ' . $line['ineligible_reason'] );
+			}
+			if ( ! empty( $coverage[ $key ] ) ) {
+				/* translators: %s: line name. */
+				return new WP_Error( 'mmr_covered', sprintf( __( '%s already has an event this month.', 'mm-register' ), $line['name'] ) );
+			}
+			$lines[] = $line;
+		}
+
+		$types = array_unique( wp_list_pluck( $lines, 'type' ) );
+		if ( count( $types ) > 1 ) {
+			return new WP_Error( 'mmr_mixed_type', __( 'Different settle methods can\'t share one event.', 'mm-register' ) );
+		}
+		$payers = array_unique( wp_list_pluck( $lines, 'payer_key' ) );
+		if ( count( $payers ) > 1 ) {
+			return new WP_Error( 'mmr_mixed_payer', __( 'Different payers can\'t share one event.', 'mm-register' ) );
+		}
+
+		$first = $lines[0];
+		$class_ids = array_values( array_unique( array_map( 'intval', wp_list_pluck( $lines, 'class_id' ) ) ) );
+		$total = 0.0;
+		foreach ( $lines as $line ) {
+			$total += (float) $line['amount'];
+		}
+		$total = round( $total, 2 );
+
+		if ( $first['student_id'] ) {
+			$source_kind = 'student';
+			$source_id = (int) $first['student_id'];
+		} elseif ( 1 === count( $lines ) ) {
+			$source_kind = 'class';
+			$source_id = (int) $first['class_id'];
+		} else {
+			// Several class lines with one payer key share one company.
+			$source_kind = 'company';
+			$source_id = (int) $first['company_id'];
+		}
+
+		$id = self::save_event( array(
+			'type'          => $first['type'],
+			'issue_date'    => current_time( 'Y-m-d' ),
+			'class_ids'     => $class_ids,
+			'who_text'      => $first['student_id'] ? $first['name'] : '',
+			'amount'        => $total,
+			'lines_total'   => $total,
+			'source_period' => $period,
+			'source_kind'   => $source_kind,
+			'source_id'     => $source_id,
+			'is_draft'      => 1,
+			'notes'         => '',
+		) );
+		if ( ! $id ) {
+			return new WP_Error( 'mmr_save_failed', __( 'The event could not be saved.', 'mm-register' ) );
+		}
+		return $id;
+	}
+
+	/**
+	 * Load an event and refuse unless it is a draft.
+	 *
+	 * @param int $id Event ID.
+	 * @return object|WP_Error
+	 */
+	protected static function draft_or_error( $id ) {
+		$event = self::event( (int) $id );
+		if ( ! $event ) {
+			return new WP_Error( 'mmr_no_event', __( 'That event no longer exists.', 'mm-register' ) );
+		}
+		if ( ! (int) $event->is_draft ) {
+			return new WP_Error( 'mmr_not_draft', __( 'This event has been issued — its amount is locked.', 'mm-register' ) );
+		}
+		return $event;
+	}
+
+	/**
+	 * Re-save a draft with a given class set, its amount re-read from the
+	 * current settlement. Classes whose line has gone from the settlement are
+	 * dropped; with none left the draft is deleted.
+	 *
+	 * @param object $event     Draft event row.
+	 * @param int[]  $class_ids Classes to keep.
+	 * @return string updated|deleted
+	 */
+	protected static function rebuild_draft( $event, $class_ids ) {
+		$by_key = array();
+		foreach ( self::billable_lines( $event->source_period ) as $line ) {
+			$by_key[ $line['key'] ] = $line;
+		}
+
+		$keep = array();
+		$total = 0.0;
+		foreach ( $class_ids as $cid ) {
+			$key = ( 'student' === $event->source_kind ) ? $cid . ':' . (int) $event->source_id : (string) $cid;
+			if ( ! isset( $by_key[ $key ] ) ) {
+				continue; // Lessons gone (or the class switched billing mode).
+			}
+			$keep[] = (int) $cid;
+			$total += (float) $by_key[ $key ]['amount'];
+		}
+
+		if ( empty( $keep ) ) {
+			self::delete_event( (int) $event->id );
+			return 'deleted';
+		}
+
+		$data = (array) $event;
+		$data['class_ids'] = $keep;
+		$data['amount'] = round( $total, 2 );
+		$data['lines_total'] = round( $total, 2 );
+		if ( 'student' !== $event->source_kind ) {
+			if ( 1 === count( $keep ) ) {
+				$data['source_kind'] = 'class';
+				$data['source_id'] = $keep[0];
+			} else {
+				$data['source_kind'] = 'company';
+				$data['source_id'] = $by_key[ (string) $keep[0] ]['company_id'];
+			}
+		}
+		self::save_event( $data, (int) $event->id );
+		return 'updated';
+	}
+
+	/**
+	 * Refresh a draft's amount to the current settlement.
+	 *
+	 * @param int $id Event ID.
+	 * @return string|WP_Error updated|deleted
+	 */
+	public static function update_draft_from_settlement( $id ) {
+		$event = self::draft_or_error( $id );
+		if ( is_wp_error( $event ) ) {
+			return $event;
+		}
+		if ( ! mmr_sanitize_period( $event->source_period ) ) {
+			return new WP_Error( 'mmr_no_period', __( 'This event is not linked to a settlement month.', 'mm-register' ) );
+		}
+		return self::rebuild_draft( $event, self::event_class_ids( (int) $event->id ) );
+	}
+
+	/**
+	 * Take one line out of a draft. The last line out deletes the draft.
+	 *
+	 * @param int    $id  Event ID.
+	 * @param string $key Line key.
+	 * @return string|WP_Error updated|deleted
+	 */
+	public static function remove_line_from_draft( $id, $key ) {
+		$event = self::draft_or_error( $id );
+		if ( is_wp_error( $event ) ) {
+			return $event;
+		}
+		$classes = self::event_classes_map( array( (int) $event->id ) );
+		$list = isset( $classes[ (int) $event->id ] ) ? $classes[ (int) $event->id ] : array();
+		$key = (string) $key;
+		if ( ! in_array( $key, self::line_keys_for_event( $event, $list ), true ) ) {
+			return new WP_Error( 'mmr_not_in_event', __( 'That line is not part of this event.', 'mm-register' ) );
+		}
+		$parts = explode( ':', $key );
+		$remove = (int) $parts[0];
+		$keep = array();
+		foreach ( $list as $class ) {
+			if ( (int) $class['id'] !== $remove ) {
+				$keep[] = (int) $class['id'];
+			}
+		}
+		if ( empty( $keep ) ) {
+			self::delete_event( (int) $event->id );
+			return 'deleted';
+		}
+		return self::rebuild_draft( $event, $keep );
+	}
+
+	/**
+	 * Issue a draft from the Settlement page.
+	 *
+	 * - invoice: refused — the invoice number, typed in Events, is the issue act;
+	 * - revolut: Sent (the request went out);
+	 * - cash: Paid — handing over cash is the payment, so there is no sent step;
+	 * - rozliczenie: confirmed (is_draft = 0).
+	 * Sent / Paid clear the draft through normalize_event()'s auto-issue rule.
+	 *
+	 * @param int $id Event ID.
+	 * @return true|WP_Error
+	 */
+	public static function mark_event_issued( $id ) {
+		$event = self::event( (int) $id );
+		if ( ! $event ) {
+			return new WP_Error( 'mmr_no_event', __( 'That event no longer exists.', 'mm-register' ) );
+		}
+		if ( ! (int) $event->is_draft ) {
+			return new WP_Error( 'mmr_not_draft', __( 'This event has already been issued.', 'mm-register' ) );
+		}
+		switch ( $event->type ) {
+			case 'invoice':
+				return new WP_Error( 'mmr_invoice_number', __( 'Add the invoice number in Events to issue it.', 'mm-register' ) );
+			case 'revolut':
+				self::set_event_flag( (int) $event->id, 'sent', 1 );
+				return true;
+			case 'cash':
+				self::set_event_flag( (int) $event->id, 'paid', 1 );
+				return true;
+			case 'rozliczenie':
+				$data = (array) $event;
+				$data['is_draft'] = 0;
+				self::save_event( $data, (int) $event->id );
+				return true;
+		}
+		return new WP_Error( 'mmr_bad_type', __( 'This event type cannot be issued here.', 'mm-register' ) );
+	}
+
+	/**
+	 * Mark an issued event paid. Never a draft, never a rozliczenie.
+	 *
+	 * @param int $id Event ID.
+	 * @return true|WP_Error
+	 */
+	public static function mark_event_paid( $id ) {
+		$event = self::event( (int) $id );
+		if ( ! $event ) {
+			return new WP_Error( 'mmr_no_event', __( 'That event no longer exists.', 'mm-register' ) );
+		}
+		if ( (int) $event->is_draft ) {
+			return new WP_Error( 'mmr_is_draft', __( 'Issue the event before marking it paid.', 'mm-register' ) );
+		}
+		if ( ! in_array( $event->type, array( 'invoice', 'revolut', 'cash' ), true ) ) {
+			return new WP_Error( 'mmr_never_paid', __( 'A rozliczenie is never paid — it records prepaid lessons.', 'mm-register' ) );
+		}
+		if ( (int) $event->paid ) {
+			return new WP_Error( 'mmr_already_paid', __( 'This event is already paid.', 'mm-register' ) );
+		}
+		self::set_event_flag( (int) $event->id, 'paid', 1 );
+		return true;
+	}
+
+	/**
+	 * Drift: the current settlement figure when it differs from the one the
+	 * event was drafted from, else null. Read-only — never writes.
+	 *
+	 * @param object $event               Event row.
+	 * @param float  $current_lines_total Σ current amounts of its lines.
+	 * @return float|null
+	 */
+	public static function event_drift( $event, $current_lines_total ) {
+		if ( null === $event->lines_total || '' === $event->lines_total ) {
+			return null;
+		}
+		$current = round( (float) $current_lines_total, 2 );
+		if ( abs( $current - (float) $event->lines_total ) > 0.005 ) {
+			return $current;
+		}
+		return null;
+	}
+
+	/**
+	 * Status of an event as the Settlement page shows it.
+	 *
+	 * @param object $event Event row.
+	 * @return array [ key => draft|issued|paid, label ]
+	 */
+	public static function event_status( $event ) {
+		if ( (int) $event->is_draft ) {
+			return array( 'key' => 'draft', 'label' => __( 'Draft', 'mm-register' ) );
+		}
+		if ( (int) $event->paid ) {
+			return array( 'key' => 'paid', 'label' => __( 'Paid', 'mm-register' ) );
+		}
+		$labels = array(
+			'revolut'     => __( 'Requested', 'mm-register' ),
+			'rozliczenie' => __( 'Recorded', 'mm-register' ),
+		);
+		return array(
+			'key'   => 'issued',
+			'label' => isset( $labels[ $event->type ] ) ? $labels[ $event->type ] : __( 'Issued', 'mm-register' ),
+		);
 	}
 }

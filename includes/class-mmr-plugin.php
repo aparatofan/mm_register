@@ -167,6 +167,7 @@ class MMR_Plugin {
 					'invoice' => __( 'invoice', 'mm-register' ),
 					'revolut' => __( 'revolut', 'mm-register' ),
 					'cash'    => __( 'cash', 'mm-register' ),
+					'rozliczenie' => __( 'rozliczenie', 'mm-register' ),
 				),
 				// Week-pill status thresholds + labels, so live updates stay in
 				// sync with the server render. Colour still lives only in CSS;

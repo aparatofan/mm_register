@@ -126,6 +126,9 @@ class MMR_Admin {
 			'toggle_company_status' => 'post_toggle_company_status',
 			'save_event'            => 'post_save_event',
 			'delete_event'          => 'post_delete_event',
+			'settle_create_event'   => 'post_settle_create_event',
+			'settle_create_remaining' => 'post_settle_create_remaining',
+			'settle_event_action'   => 'post_settle_event_action',
 			'import_data'           => 'post_import_data',
 			'export_data'           => 'post_export_data',
 			'wipe_data'             => 'post_wipe_data',
@@ -276,6 +279,7 @@ class MMR_Admin {
 			'client_type'   => $this->text( 'client_type' ),
 			'settle_method' => $this->text( 'settle_method' ),
 			'company_id'    => $company_id,
+			'pay_per_member' => $this->bool( 'pay_per_member' ),
 			'notes'         => $this->textarea( 'notes' ),
 			'status'        => in_array( $this->text( 'status' ), array( 'active', 'archived' ), true ) ? $this->text( 'status' ) : 'active',
 		);
@@ -335,6 +339,7 @@ class MMR_Admin {
 			'client_type'   => 'private',
 			'settle_method' => $this->text( 'settle_method' ),
 			'company_id'    => 0,
+			'pay_per_member' => 0,
 			'notes'         => '',
 			'status'        => 'active',
 		) );
@@ -405,6 +410,21 @@ class MMR_Admin {
 			$this->redirect( 'events', 'Who is required.', $this->filter_args(), true );
 		}
 
+		// The form has no is_draft / lines_total fields. On an update carry the
+		// stored values through, so saving a draft (e.g. to fix its date) keeps
+		// it a draft and keeps its drift baseline; normalize_event()'s
+		// auto-issue rule then clears the draft if a number / Sent / Paid was
+		// entered. New events made here are real documents: 0 and NULL.
+		$is_draft = 0;
+		$lines_total = null;
+		if ( $id ) {
+			$stored = MMR_Data::event( $id );
+			if ( $stored ) {
+				$is_draft = (int) $stored->is_draft;
+				$lines_total = $stored->lines_total;
+			}
+		}
+
 		MMR_Data::save_event( array(
 			'type'          => $this->text( 'type' ),
 			'doc_number'    => $this->text( 'doc_number' ),
@@ -420,6 +440,8 @@ class MMR_Admin {
 			'source_kind'   => $this->text( 'source_kind' ),
 			'source_id'     => isset( $_POST['source_id'] ) ? (int) $_POST['source_id'] : 0, // phpcs:ignore WordPress.Security.NonceVerification
 			'source_period' => $this->text( 'source_period' ),
+			'is_draft'      => $is_draft,
+			'lines_total'   => $lines_total,
 		), $id );
 		$this->redirect( 'events', 'saved', $this->filter_args() );
 	}
@@ -431,6 +453,121 @@ class MMR_Admin {
 			MMR_Data::delete_event( $id );
 		}
 		$this->redirect( 'events', 'deleted', $this->filter_args() );
+	}
+
+	/* --- Settlement: draft events (2.7) -------------------------------- */
+
+	/**
+	 * The posted settlement period, or a redirect back with an error.
+	 *
+	 * @return string Y-m.
+	 */
+	protected function settle_period() {
+		$period = mmr_sanitize_period( $this->text( 'period' ) );
+		if ( ! $period ) {
+			$this->redirect( 'settlement', 'Unknown month.', array(), true );
+		}
+		return $period;
+	}
+
+	/** Create one draft event from one or more ticked lines. */
+	protected function post_settle_create_event() {
+		$period = $this->settle_period();
+		$keys = isset( $_POST['line_keys'] ) ? (array) wp_unslash( $_POST['line_keys'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$keys = array_map( 'sanitize_text_field', $keys );
+
+		$result = MMR_Data::create_event_from_lines( $period, $keys );
+		if ( is_wp_error( $result ) ) {
+			$this->redirect( 'settlement', $result->get_error_message(), array( 'period' => $period ), true );
+		}
+		/* translators: %d: event ID. */
+		$this->redirect( 'settlement', sprintf( __( 'Draft event E-%d created.', 'mm-register' ), $result ), array( 'period' => $period, 'event' => $result ) );
+	}
+
+	/**
+	 * One draft per uncovered eligible line. Coverage is read once here;
+	 * create_event_from_lines() re-checks it per line, so a line covered in
+	 * the meantime is skipped rather than drafted twice.
+	 */
+	protected function post_settle_create_remaining() {
+		$period = $this->settle_period();
+		$coverage = MMR_Data::events_for_period( $period );
+
+		$created = 0;
+		$skipped = array(); // reason => names.
+		foreach ( MMR_Data::billable_lines( $period ) as $line ) {
+			if ( ! empty( $coverage[ $line['key'] ] ) ) {
+				continue;
+			}
+			if ( '' !== $line['ineligible_reason'] ) {
+				$skipped[ $line['ineligible_reason'] ][] = $line['name'];
+				continue;
+			}
+			$result = MMR_Data::create_event_from_lines( $period, array( $line['key'] ) );
+			if ( is_wp_error( $result ) ) {
+				$skipped[ $result->get_error_message() ][] = $line['name'];
+				continue;
+			}
+			$created++;
+		}
+
+		/* translators: %d: number of draft events created. */
+		$parts = array( sprintf( _n( 'Created %d draft event.', 'Created %d draft events.', $created, 'mm-register' ), $created ) );
+		foreach ( $skipped as $reason => $names ) {
+			/* translators: 1: number skipped, 2: line names, 3: reason. */
+			$parts[] = sprintf( __( 'Skipped %1$d: %2$s — %3$s', 'mm-register' ), count( $names ), implode( ', ', $names ), $reason );
+		}
+		$this->redirect( 'settlement', implode( ' ', $parts ), array( 'period' => $period ), 0 === $created && ! empty( $skipped ) );
+	}
+
+	/** Act on one event from the Settlement page's event panel. */
+	protected function post_settle_event_action() {
+		$period = $this->settle_period();
+		$id = isset( $_POST['id'] ) ? (int) $_POST['id'] : 0; // phpcs:ignore WordPress.Security.NonceVerification
+		$do = $this->text( 'do' );
+		$back = array( 'period' => $period, 'event' => $id );
+
+		switch ( $do ) {
+			case 'update':
+				$result = MMR_Data::update_draft_from_settlement( $id );
+				$notice = __( 'Draft updated to the settlement.', 'mm-register' );
+				break;
+			case 'remove_line':
+				$result = MMR_Data::remove_line_from_draft( $id, $this->text( 'line_key' ) );
+				$notice = __( 'Line removed from the event.', 'mm-register' );
+				break;
+			case 'issue':
+				$result = MMR_Data::mark_event_issued( $id );
+				$notice = __( 'Event issued — its amount is now locked.', 'mm-register' );
+				break;
+			case 'pay':
+				$result = MMR_Data::mark_event_paid( $id );
+				$notice = __( 'Event marked as paid.', 'mm-register' );
+				break;
+			case 'delete':
+				// Drafts only from here; issued documents are deleted in Events.
+				$event = MMR_Data::event( $id );
+				if ( ! $event || ! (int) $event->is_draft ) {
+					$result = new WP_Error( 'mmr_not_draft', __( 'Only drafts can be deleted from the Settlement page.', 'mm-register' ) );
+				} else {
+					MMR_Data::delete_event( $id );
+					$result = 'deleted';
+				}
+				$notice = '';
+				break;
+			default:
+				$this->redirect( 'settlement', 'nothing', $back, true );
+				return;
+		}
+
+		if ( is_wp_error( $result ) ) {
+			$this->redirect( 'settlement', $result->get_error_message(), $back, true );
+		}
+		if ( 'deleted' === $result ) {
+			/* translators: %d: event ID. */
+			$this->redirect( 'settlement', sprintf( __( 'Draft E-%d deleted.', 'mm-register' ), $id ), array( 'period' => $period ) );
+		}
+		$this->redirect( 'settlement', $notice, $back );
 	}
 
 	/* --- Tools --------------------------------------------------------- */
