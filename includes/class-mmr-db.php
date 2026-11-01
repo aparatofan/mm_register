@@ -204,6 +204,9 @@ class MMR_DB {
 			KEY name (name)
 		) {$charset_collate};";
 
+		// `pay_per_member` (v2.4): each member of the class is billed on their
+		// own — the Settlement page offers one billable line per member instead
+		// of one for the class. Default 0 keeps every existing class as it was.
 		$sql[] = "CREATE TABLE {$classes} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			name VARCHAR(190) NOT NULL,
@@ -211,6 +214,7 @@ class MMR_DB {
 			client_type VARCHAR(60) NULL DEFAULT NULL,
 			settle_method VARCHAR(60) NULL DEFAULT NULL,
 			company_id BIGINT UNSIGNED NULL DEFAULT NULL,
+			pay_per_member TINYINT(1) NOT NULL DEFAULT 0,
 			notes TEXT NULL,
 			status ENUM('active','archived') NOT NULL DEFAULT 'active',
 			PRIMARY KEY  (id),
@@ -261,6 +265,15 @@ class MMR_DB {
 		// Events — the receivables register (v2.2). NOTE: this is deliberately
 		// NOT the v1 `mmr_settlements` table, which upgrade_legacy() still
 		// drops; `events` must never appear in legacy_keys().
+		//
+		// v2.4 (drafts from Settlement): `is_draft` marks an event created by
+		// the Settlement page that has not been issued yet — left out of the
+		// Issued / Received / Outstanding totals and refreshable to the live
+		// settlement. Existing rows default to 0: they are real documents.
+		// `lines_total` is the settlement figure the event was drafted from —
+		// compared with the live settlement to flag drift; never copied into
+		// `amount` once the event is issued. NULL (every manual and pre-2.4
+		// event) means no drift check at all.
 		$sql[] = "CREATE TABLE {$events} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			type VARCHAR(20) NOT NULL DEFAULT 'invoice',
@@ -277,13 +290,16 @@ class MMR_DB {
 			source_kind VARCHAR(10) NULL DEFAULT NULL,
 			source_id BIGINT UNSIGNED NULL DEFAULT NULL,
 			source_period CHAR(7) NULL DEFAULT NULL,
+			is_draft TINYINT(1) NOT NULL DEFAULT 0,
+			lines_total DECIMAL(10,2) NULL DEFAULT NULL,
 			created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
 			updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
 			PRIMARY KEY  (id),
 			KEY issue_date (issue_date),
 			KEY paid (paid),
 			KEY type (type),
-			KEY source (source_kind, source_id)
+			KEY source (source_kind, source_id),
+			KEY source_period (source_period)
 		) {$charset_collate};";
 
 		// Who an event is for (v2.3): one row per selected class, so events stay

@@ -44,9 +44,11 @@ Core philosophy inherited from the sheet:
 2. **Settlement** — read-only computed monthly report with a per-student
    "to bill" summary, copy-to-clipboard and CSV export.
 3. **Events** — the receivables register: a chronological list of documents
-   issued (invoice / revolut / cash) with KSEF · SENT · PAID ticks, a payment
-   date and a year-scoped **Outstanding** total. Amounts are taken from the
-   computed settlement through a picker, never retyped.
+   issued (invoice / revolut / cash / rozliczenie) with KSEF · SENT · PAID
+   ticks, a payment date and a year-scoped **Outstanding** total. Amounts are
+   taken from the computed settlement through a picker, never retyped — or
+   drafted straight from the Settlement page (2.7, §7.2). `rozliczenie`
+   records prepaid lessons drawn down and is never money owed.
 4. **Students** — standalone CRUD page.
 5. **Classes** — standalone CRUD page (with members repeater and quick-add
    1-on-1).
@@ -110,6 +112,11 @@ does not create it.
    still records where a *figure* came from, and is never cleared by later
    edits.
 
+   *(2.7)* Drafts from Settlement create one event per billable line, but
+   nothing prevents a second event for the same line — the "one event per
+   line" rule belongs to the automation only, not to the schema or the Events
+   form — so split documents still work.
+
 ## 4. Technical requirements
 
 - Plugin slug: `mm-register`. Main file `mm-register.php`. Prefix everything
@@ -153,6 +160,7 @@ Tables (all `{$wpdb->prefix}mmr_*`):
 | client_type | VARCHAR(60) | free string; UI offers datalist of existing values |
 | settle_method | VARCHAR(60) | free string; datalist |
 | company_id | BIGINT NULL | FK-by-convention to `mmr_companies.id`; NULL for private students; indexed |
+| pay_per_member | TINYINT(1) DEFAULT 0 | *(2.4)* **Members pay separately**: Settlement offers one billable line per member (when the month has ≥ 2) instead of one for the class. Shares are unchanged |
 | notes | TEXT | |
 | status | ENUM active/archived | |
 
@@ -197,7 +205,7 @@ The receivables register. One row per document issued.
 | column | type | notes |
 |---|---|---|
 | id | BIGINT PK AI | |
-| type | VARCHAR(20) DEFAULT `invoice` | one of `invoice` / `revolut` / `cash`, validated server-side. **Derived from the settle methods of the event's classes (§5.6.1), not chosen** — the posted value is accepted only where derivation cannot succeed |
+| type | VARCHAR(20) DEFAULT `invoice` | one of `invoice` / `revolut` / `cash` / `rozliczenie`, validated server-side. `rozliczenie` (settle method containing `rozlicz`) forces ksef / sent / paid to 0 and is excluded from the totals. **Derived from the settle methods of the event's classes (§5.6.1), not chosen** — the posted value is accepted only where derivation cannot succeed |
 | doc_number | VARCHAR(190) NULL | free text: KSeF ID, `czekam na PO`, or empty |
 | issue_date | DATE | day the document was issued |
 | payer_label | VARCHAR(190) | the readable "who": every selected class, then the free text, comma-joined. A snapshot — composed on save, and the only column the list, sort, search and export read |
@@ -211,9 +219,12 @@ The receivables register. One row per document issued.
 | source_kind | VARCHAR(10) NULL | `class` / `student` / `company`, or NULL when typed by hand |
 | source_id | BIGINT NULL | id of that class / student / company |
 | source_period | CHAR(7) NULL | `YYYY-MM` the suggestion was taken from |
+| is_draft | TINYINT(1) DEFAULT 0 | *(2.4)* created from Settlement and not yet issued. Listed, but excluded from Issued / Received / Outstanding. **Auto-issue:** a non-empty `doc_number`, or `sent` / `paid` = 1, forces 0 on every save path |
+| lines_total | DECIMAL(10,2) NULL | *(2.4)* settlement figure the event was drafted from — compared with the live settlement to flag drift; never copied into `amount` once the event is issued. NULL (manual and pre-2.4 events) = no drift check |
 | created_at / updated_at | DATETIME | |
 
-Indexed on `issue_date`, `paid`, `type` and `(source_kind, source_id)`.
+Indexed on `issue_date`, `paid`, `type`, `(source_kind, source_id)` and
+`source_period`.
 Default list order is `issue_date DESC, id DESC`.
 
 ### 5.6.1 `mmr_event_classes` — who an event is for
@@ -249,7 +260,7 @@ silently corrupt financial history.
 
 ### 5.7 Versioning & upgrades
 
-- `MMR_DB_VERSION` (currently `2.3`) is stored in the `mmr_db_version` option.
+- `MMR_DB_VERSION` (currently `2.4`) is stored in the `mmr_db_version` option.
 - On plugin load (and activation), if the stored option is behind, the upgrade
   routine runs and is idempotent:
   - **v1 → v2:** dump the legacy tables (settlements, budget_items,
@@ -266,6 +277,11 @@ silently corrupt financial history.
     and are never rewritten; no data is migrated (§5.6.1). The upgrade runs on
     `admin_init` at priority 1, ahead of the form handler, so the first request
     after an update cannot write to a table dbDelta has not reached yet.
+  - **v2.3 → v2.4:** no bespoke routine — `dbDelta` adds
+    `mmr_classes.pay_per_member` (0), `mmr_events.is_draft` (0),
+    `mmr_events.lines_total` (NULL) and the `source_period` index. Every
+    existing event stays a real, issued document with no drift check; every
+    class keeps billing as one line. No data is rewritten.
   - Finally `dbDelta` runs for the current tables — creating `mmr_companies`
     and adding the new student columns (`email_2`, `phone`, `level`),
     `mmr_classes.company_id` and the `mmr_events` table. Backups are written to
@@ -330,6 +346,47 @@ private). TBT is added once per student per month (across all their classes).
 Buttons: **Copy to clipboard** (TSV) and **Download CSV** — both include the
 Company column. No PDF, no invoice generation.
 
+**Draft events (2.7).** A *billable line* is the smallest thing one payer pays
+for in a month: a class (key `{class_id}`), or — for a class with *Members pay
+separately* and ≥ 2 members — each member (key `{class_id}:{student_id}`). Its
+amount is read from the report (class `to_bill`, or member `total`), never
+recomputed. A line is *covered* when an event with `source_period` = the month
+covers it: `source_kind = student` covers member lines of its classes; `class`
+or `company` covers the class lines of its classes. Events with no source are
+invisible to coverage.
+
+- **Toolbar:** an *Events: {covered} of {total} lines* chip (green border when
+  complete) and **Create drafts for remaining ({n})**, which asks to confirm,
+  creates one draft per uncovered eligible line and reports what it skipped,
+  grouped by reason.
+- **Table:** a selection column (checkbox per uncovered line, disabled with
+  the reason when ineligible) and an **Event** column — *Create event*, the
+  reason for an ineligible line, or one status chip per covering event
+  (`Draft` / `Issued` · `Requested` · `Recorded` / `Paid` · `E-{id}`, plus the
+  line count for multi-line events). A draft whose settlement moved reads
+  *out of date*; an issued event whose settlement moved keeps its amount and
+  the row warns *Billed x — settlement is now y*. Per-member classes show
+  their members as always-visible indented sub-rows that sort and filter with
+  the class.
+- **Selection bar:** sticky while ≥ 1 line is ticked: count, Σ amount, and
+  **Combine into one event** (*Create event* for one line). Lines must share
+  one payer and one event type; the server re-validates.
+- **Ineligible lines:** unrecognised settle method; an invoice class line
+  with no company (KSeF needs one); nothing to bill.
+- **Event panel** (`&event={id}` for an event of this month): status, type,
+  payer, its lines with their current amounts, the event amount and any
+  drift, a help sentence, and the actions *Update draft to settlement*,
+  *Remove from event*, *Open in Events* (invoice; `?edit={id}`), *Mark as
+  requested* (revolut), *Mark as received* (cash), *Confirm rozliczenie*,
+  *Mark as paid*, *Delete draft*.
+
+| Type | Draft | After issuing | Paid |
+|---|---|---|---|
+| invoice | Draft | Issued (doc number typed in Events) | Paid |
+| revolut | Draft | Requested (*Mark as requested* = sent) | Paid |
+| cash | Draft | — (*Mark as received* = paid) | Paid |
+| rozliczenie | Draft | Recorded (*Confirm rozliczenie*) | — |
+
 ### 7.3 Events (receivables register)
 
 The question this page answers is **"what have I issued, and who still owes me
@@ -338,8 +395,9 @@ answered, and the one the computed Settlement page deliberately does not. The
 two are independent: Settlement stores nothing, Events stores everything.
 
 **Toolbar.** Year selector (distinct `YEAR(issue_date)` plus the current year,
-default = current year), type filter (all / invoice / revolut / cash), status
-filter (all / **unpaid** / paid / not sent / invoice not in KSeF), search over
+default = current year), type filter (all / invoice / revolut / cash /
+rozliczenie), status filter (all / **drafts** / **unpaid** / paid / not sent /
+invoice not in KSeF), search over
 `payer_label`, `doc_number` and the names of the event's classes (so a class
 renamed after a document was issued still finds it), and **+ Add event**. On
 the right, three
@@ -355,6 +413,15 @@ filters, with the label saying so** — computed in one grouped query:
 Outstanding replaces the spreadsheet's `SUMIF(…, FALSE, …)` counter (which
 silently stopped at row 999; this has no ceiling) and gets the emphasis
 treatment, as "To bill" has on Settlement.
+
+*(2.7)* All three chips exclude **drafts** (not issued yet) and
+**rozliczenie** (never money owed); the list still shows both. *Unpaid* and
+*Not sent* likewise exclude them. Drafts show a *Draft* chip next to the
+date, and the edit modal shows the status read-only — saving keeps a draft a
+draft (and its drift baseline) unless a document number is entered or Sent /
+Paid is ticked, which issues it. Rozliczenie rows show `—` for KSEF, SENT and
+PAID, and the modal hides those controls. `?edit={id}` opens that event's
+edit modal on load.
 
 **List:** Type | # | Issue date | Who | Amount | KSEF | SENT | PAID | Paid date
 | Notes | actions. Sorted `issue_date DESC, id DESC` by default — the working
@@ -469,7 +536,9 @@ rejected with "Unknown company — add it on the Companies page first"; empty =
 no company. A **"Manage companies →"** link opens the Companies page in a new
 tab. Below the grid: the **members repeater** — student `<select>` +
 "Share/lesson (zł)" input (placeholder `equal`, blank = equal split) + remove
-button + "+ Add member".
+button + "+ Add member". Under the repeater *(2.7)*: **Members pay separately**
+checkbox (*Each member gets their own event — an equal share unless a share is
+set.*), saved as `pay_per_member`; the list has no column for it.
 
 A **"Quick add: new 1-on-1"** form creates a student and a same-named class
 with one member in one step.
@@ -567,6 +636,11 @@ members) and lessons; the fee printed in the source sheet becomes
 - Email sending / payment reminders
 - Weekend columns; currencies other than PLN
 - jQuery, npm, bundlers, CSS frameworks
+- Prepaid balance tracking for `rozliczenie` (next release).
+- Re-linking an imported event's `source_id` to the new student / class /
+  company IDs. It is copied verbatim, so after a restore into a fresh install a
+  `student`-kind event may point at an old student ID and no longer cover the
+  intended member line on Settlement (2.7 coverage reads it).
 
 ## 11. Acceptance checklist
 
@@ -659,6 +733,43 @@ members) and lessons; the fee printed in the source sheet becomes
       exactly; a v3 export without `events` still imports.
 - [ ] The events list has no horizontal scrollbar at 1280 / 1440 / 1920 /
       2560 px, and no control overflows the event modal.
+
+### Drafts from Settlement (2.7)
+
+**Before merging:** Tools → Export a full JSON backup.
+
+Upgrade
+- [ ] Plugin shows 2.7.0; existing events look exactly as before; Outstanding total unchanged.
+
+Classes
+- [ ] *Members pay separately* appears in the class modal and saves.
+- [ ] After ticking *Members pay separately* on a class that already has
+      events this month, check the Settlement page for duplicate offers before
+      using *Create drafts for remaining*.
+
+Settlement — October 2026
+- [ ] Event column and checkboxes appear; *Events: 0 of N lines* (or fewer uncovered if October events already exist).
+- [ ] Ticking AWP 02, 04, Marliński and Kuc shows *4 lines selected · 3 200,00 zł*; *Combine into one event* creates one draft; all four rows show *Draft · E-x · 4 lines*.
+- [ ] Ticking an AWP row with a PwC row disables the button and says why.
+- [ ] *Create event* on one row works.
+- [ ] *Create drafts for remaining* asks to confirm, creates the rest, and skips AWP 32 PH with its reason.
+- [ ] A class with *Members pay separately* shows one line per member, each drafted separately.
+- [ ] Katarzyna's rozliczenie draft → *Confirm rozliczenie* → *Recorded*; no Mark as paid.
+- [ ] A cash draft → *Mark as received* → *Paid*.
+- [ ] Book one more lesson for a drafted class → chip turns *out of date* → *Update draft to settlement* fixes the amount.
+- [ ] Issue an invoice draft (type the number in Events) → chip *Issued*; book another lesson → the row warns, the event amount does not change.
+- [ ] *Remove from event* on a combined draft frees that row; removing the last line deletes the draft.
+- [ ] Sorting and the filter still keep each class with its member rows.
+
+Events
+- [ ] Drafts filter works; Outstanding ignores drafts and rozliczenie.
+- [ ] Typing an invoice number into a draft and saving makes it Issued.
+
+**Rollback:** revert the PR merge (redeploys 2.6.3). The DB keeps the three
+new columns and 2.6.3 ignores them. While rolled back, drafts count in
+Outstanding again, and 2.6.3 does not know the `rozliczenie` type — editing or
+ticking a flag on a rozliczenie event would turn it into an invoice. Don't
+touch those rows until 2.7.0 is back.
 
 - [ ] No PHP notices/warnings; no JS console errors on any Register page.
 - [ ] No plugin assets loaded on any non-plugin admin page or any front-end page.

@@ -15,7 +15,7 @@ The importer is:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "companies": [],
   "students": [],
   "classes": [],
@@ -31,6 +31,11 @@ imported; any other top-level keys are ignored.
 
 `events` arrived with **version 4** (plugin 2.5.0). A version 3 file, which has
 no `events` key, still imports exactly as before.
+
+**Version 5** (plugin 2.7.0) adds `classes[].pay_per_member` and
+`events[].is_draft` / `events[].lines_total`, plus the `rozliczenie` event
+type. A version 4 file imports unchanged: the missing fields default to
+`pay_per_member = 0`, `is_draft = 0` and `lines_total = null`.
 
 ## References (`ref`)
 
@@ -96,6 +101,7 @@ its class via `class_ref` or `class_name`). Unknown references produce a
 | `client_type` | string | free text (`private`, `AWP`, `PWC`, …) |
 | `company_ref` | string \| null | reference (or exact name) of a company; omit/`null` for private students |
 | `settle_method` | string | `invoice` / `REVOLUT` / `rozliczenie` / other |
+| `pay_per_member` | 0 \| 1 | optional, default 0. *Members pay separately*: the Settlement page offers one billable line (and one draft event) per member instead of one for the class |
 | `notes` | string | optional |
 | `status` | `"active"` \| `"archived"` | optional |
 | `members` | array | see below |
@@ -156,7 +162,7 @@ with a warning.
 
 | field | type | notes |
 |---|---|---|
-| `type` | `"invoice"` \| `"revolut"` \| `"cash"` | **ignored when it can be derived** — see below; anything else becomes `invoice` |
+| `type` | `"invoice"` \| `"revolut"` \| `"cash"` \| `"rozliczenie"` | **ignored when it can be derived** — see below; anything else becomes `invoice`. `rozliczenie` records prepaid lessons drawn down: never money owed, so `ksef`, `sent` and `paid` are forced to 0 |
 | `doc_number` | string | KSeF ID, `czekam na PO`, or empty |
 | `issue_date` | string | `YYYY-MM-DD`; an invalid or missing date becomes today |
 | `class_refs` | string[] | class `ref`s this document bills; refs that match no class are dropped |
@@ -171,6 +177,8 @@ with a warning.
 | `source_kind` | `"class"` \| `"student"` \| `"company"` \| null | where the amount was taken from; anything else becomes null |
 | `source_id` | integer \| null | id of that class / student / company |
 | `source_period` | string \| null | `YYYY-MM` the suggestion came from |
+| `is_draft` | 0 \| 1 | optional, default 0. A draft created from the Settlement page and not yet issued; left out of the Issued / Received / Outstanding totals. **Forced to 0** when `doc_number` is non-empty or `sent` / `paid` is 1 |
+| `lines_total` | number \| null | optional, default null. The settlement figure a draft was created from — used only to flag drift; never copied into `amount`. `null` for manual events (no drift check) |
 
 ```json
 {

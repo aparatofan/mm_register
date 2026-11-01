@@ -121,6 +121,7 @@ if ( $company_filter ) {
 					'company_id'    => $company_id ? $company_id : '',
 					'company'       => $company_name,
 					'settle_method' => $class->settle_method,
+					'pay_per_member' => (int) $class->pay_per_member,
 					'notes'         => $class->notes,
 					'status'        => $class->status,
 					'members'       => $member_json,
@@ -236,6 +237,10 @@ if ( $company_filter ) {
 					</div>
 					<div id="mmr-members-rows"></div>
 					<p><button type="button" class="button" id="mmr-add-member"><?php esc_html_e( '+ Add member', 'mm-register' ); ?></button></p>
+					<p class="mmr-field mmr-pay-per-member">
+						<label class="mmr-check"><input type="checkbox" name="pay_per_member" value="1" data-field="pay_per_member" aria-describedby="mmr-pay-per-member-hint"> <?php esc_html_e( 'Members pay separately', 'mm-register' ); ?></label>
+						<span class="mmr-hint" id="mmr-pay-per-member-hint"><?php esc_html_e( 'Each member gets their own event — an equal share unless a share is set.', 'mm-register' ); ?></span>
+					</p>
 
 					<?php
 					// Students offered by the type-to-search member field. The posted

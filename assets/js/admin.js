@@ -822,15 +822,17 @@
 		}
 	}
 
-	/* A class row plus its optional split row move as one unit. */
+	/* A class row plus its optional split row and its member-line sub-rows
+	   (Members pay separately) move — and filter — as one unit. */
 	function settlementGroups( tbody ) {
 		var groups = [];
 		var rows = tbody.querySelectorAll( 'tr.mmr-settle-row' );
 		Array.prototype.forEach.call( rows, function ( row, index ) {
 			var nodes = [ row ];
 			var next = row.nextElementSibling;
-			if ( next && next.classList.contains( 'mmr-split-row' ) ) {
+			while ( next && ( next.classList.contains( 'mmr-split-row' ) || next.classList.contains( 'mmr-member-line' ) ) ) {
 				nodes.push( next );
+				next = next.nextElementSibling;
 			}
 			groups.push( { row: row, nodes: nodes, index: index } );
 		} );
@@ -892,7 +894,83 @@
 
 		initSettlementSort();
 		initSettlementFilter();
+		initSettlementSelection();
 		initSummaryExport();
+	}
+
+	/* Selection bar: tick uncovered lines, then create one event for them.
+	   The client check only drives the button state — the server re-validates
+	   payer, type, eligibility and coverage on submit. */
+	function initSettlementSelection() {
+		var table = document.querySelector( '.mmr-settlement-table' );
+		var bar = document.getElementById( 'mmr-selection-form' );
+		if ( ! table || ! bar ) { return; }
+
+		var countOut = bar.querySelector( '.mmr-selection-bar__count' );
+		var sumOut = bar.querySelector( '.mmr-selection-bar__sum' );
+		var submit = bar.querySelector( '.mmr-selection-bar__submit' );
+		var clear = bar.querySelector( '.mmr-selection-bar__clear' );
+		var errorOut = bar.querySelector( '.mmr-selection-bar__error' );
+
+		function ticked() {
+			return Array.prototype.slice.call( table.querySelectorAll( 'input.mmr-line-check:checked' ) );
+		}
+
+		function update() {
+			var boxes = ticked();
+			var types = [];
+			var payers = [];
+			var sum = 0;
+
+			table.querySelectorAll( 'input.mmr-line-check' ).forEach( function ( box ) {
+				var row = box.closest( 'tr' );
+				if ( row ) { row.classList.toggle( 'is-selected', box.checked ); }
+			} );
+
+			boxes.forEach( function ( box ) {
+				var row = box.closest( 'tr' );
+				var type = row.getAttribute( 'data-type' ) || '';
+				var payer = row.getAttribute( 'data-payer-key' ) || '';
+				if ( types.indexOf( type ) < 0 ) { types.push( type ); }
+				if ( payers.indexOf( payer ) < 0 ) { payers.push( payer ); }
+				/* Cents as integers, so the shown sum never drifts by a grosz. */
+				sum += Math.round( ( parseFloat( row.getAttribute( 'data-amount' ) ) || 0 ) * 100 );
+			} );
+
+			var n = boxes.length;
+			bar.hidden = 0 === n;
+			if ( ! n ) { return; }
+
+			countOut.textContent = 1 === n
+				? bar.getAttribute( 'data-one' )
+				: bar.getAttribute( 'data-many' ).replace( '%s', n );
+			sumOut.textContent = '· ' + formatMoney( sum / 100 );
+			submit.textContent = 1 === n ? bar.getAttribute( 'data-create' ) : bar.getAttribute( 'data-combine' );
+
+			var message = '';
+			if ( types.length > 1 ) {
+				message = bar.getAttribute( 'data-mixed-type' );
+			} else if ( payers.length > 1 ) {
+				message = bar.getAttribute( 'data-mixed-payer' );
+			}
+			submit.disabled = '' !== message;
+			errorOut.textContent = message;
+			errorOut.hidden = '' === message;
+		}
+
+		table.addEventListener( 'change', function ( e ) {
+			if ( e.target.matches( 'input.mmr-line-check' ) ) { update(); }
+		} );
+		clear.addEventListener( 'click', function () {
+			ticked().forEach( function ( box ) { box.checked = false; } );
+			update();
+		} );
+		bar.addEventListener( 'submit', function ( e ) {
+			if ( submit.disabled || ! ticked().length ) { e.preventDefault(); }
+		} );
+
+		/* Browsers restore checkbox state on back/refresh. */
+		update();
 	}
 
 	/* Client-side filter over the same data-* attributes the sort reads. The
@@ -1109,6 +1187,24 @@
 		if ( ! isInvoice ) { ksef.checked = false; }
 		var label = ksef.closest( 'label' );
 		if ( label ) { label.classList.toggle( 'is-disabled', ! isInvoice ); }
+
+		/* Rozliczenie draws down a prepayment: it is never in KSeF, never
+		   sent and never paid, so those controls are hidden (the server
+		   forces them to 0 anyway). */
+		var isRozliczenie = typeField.value === 'rozliczenie';
+		[ 'ksef', 'sent', 'paid' ].forEach( function ( flag ) {
+			var box = form.querySelector( '[data-field="' + flag + '"]' );
+			var wrap = box ? box.closest( 'label' ) : null;
+			if ( ! box || ! wrap ) { return; }
+			wrap.hidden = isRozliczenie;
+			if ( isRozliczenie ) { box.checked = false; }
+		} );
+		var paidDate = form.querySelector( '[data-field="paid_date"]' );
+		var paidDateWrap = paidDate ? paidDate.closest( '.mmr-field' ) : null;
+		if ( paidDateWrap ) { paidDateWrap.hidden = isRozliczenie; }
+		if ( paidDate && isRozliczenie ) { paidDate.value = ''; }
+		var note = document.getElementById( 'mmr-event-rozliczenie-note' );
+		if ( note ) { note.hidden = ! isRozliczenie; }
 	}
 
 	/* Who — the entry point of the event form. Options are the register's own
@@ -1349,7 +1445,12 @@
 				} );
 				var dateCell = row.querySelector( '.mmr-event-paid-date' );
 				if ( dateCell ) { dateCell.textContent = ev.paid_date_display || ''; }
-				row.classList.toggle( 'mmr-event--unpaid', ! Number( ev.paid ) );
+				/* Ticking Sent / Paid issues a draft (server-side auto-issue). */
+				if ( ! Number( ev.is_draft ) ) {
+					var draftChip = row.querySelector( '.mmr-draft-chip' );
+					if ( draftChip ) { draftChip.parentNode.removeChild( draftChip ); }
+				}
+				row.classList.toggle( 'mmr-event--unpaid', ! Number( ev.paid ) && ! Number( ev.is_draft ) && 'rozliczenie' !== ev.type );
 
 				Object.keys( totals ).forEach( function ( key ) {
 					if ( totals[ key ] ) { totals[ key ].textContent = res.data.totals[ key + '_display' ]; }
@@ -1509,7 +1610,21 @@
 			} else {
 				syncKsefField( form );
 			}
+			/* Draft status is shown, never edited — it clears itself on save
+			   when a number is entered or Sent / Paid is ticked. */
+			var draftStatus = document.getElementById( 'mmr-event-draft-status' );
+			if ( draftStatus ) { draftStatus.hidden = ! Number( data.is_draft ); }
 		} );
+
+		/* ?edit={id} — deep link from the Settlement page's event panel: open
+		   that row's edit modal on load. The link carries the issue year, so
+		   the row is in the listed view. */
+		var editId = new URLSearchParams( window.location.search ).get( 'edit' );
+		if ( editId && /^\d+$/.test( editId ) ) {
+			var editRow = page.querySelector( '.mmr-event-row[data-id="' + editId + '"]' );
+			var editBtn = editRow ? editRow.querySelector( '.mmr-event-edit' ) : null;
+			if ( editBtn ) { editBtn.click(); }
+		}
 
 		form.addEventListener( 'change', function ( e ) {
 			if ( e.target.matches( '[data-field="type"]' ) ) { syncKsefField( form ); }

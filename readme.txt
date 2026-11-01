@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.6.3
+Stable tag: 2.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,19 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.7.0 =
+* Settlement: draft events from billable lines — an Event column with status
+  chips, Create event per line, Combine into one event for ticked lines with
+  the same payer and settle method, and Create drafts for remaining. An event
+  panel updates, trims, issues, pays or deletes a draft. DB version 2.4 adds
+  mmr_events.is_draft / lines_total and mmr_classes.pay_per_member.
+* Classes: "Members pay separately" — one billable line per member.
+* Events: new rozliczenie type (prepaid drawdown; no KSeF / sent / paid, never
+  in the totals), Drafts filter and chip, ?edit={id} deep link. Drafts and
+  rozliczenie are excluded from Issued / Received / Outstanding.
+* Export version 5 (pay_per_member, is_draft, lines_total); version 4 files
+  still import.
 
 = 2.5.0 =
 * New Events page and mmr_events table (DB version 2.2): the receivables

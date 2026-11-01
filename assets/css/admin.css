@@ -798,6 +798,77 @@
 /* Small fixed-width controls are the only allowed px widths. */
 .mmr-input-fee { width: 90px; }
 
+/* Settlement — draft events (2.7) ------------------------------------- */
+/* Status chips are pills (999px): they are statuses, which the Style Book
+   allows. The same chip marks drafts in the Events list. */
+.mmr-settlement .mmr-status-chip,
+.mmr-events .mmr-status-chip {
+	display: inline-block;
+	padding: 1px 8px;
+	border: 1px solid #D0D5DD;
+	border-radius: 999px;
+	background: #F2F4F7;
+	color: #344054;
+	font-size: 12px;
+	line-height: 18px;
+	white-space: nowrap;
+	text-decoration: none;
+}
+.mmr-settlement a.mmr-status-chip:hover,
+.mmr-settlement a.mmr-status-chip:focus { text-decoration: underline; }
+.mmr-settlement .mmr-status-chip--warn { background: #FFF6ED; color: #B54708; border-color: #F9DBAF; }
+.mmr-settlement .mmr-status-chip--issued { background: #EDF4FF; color: #0856C9; border-color: #B2CCF5; }
+.mmr-settlement .mmr-status-chip--paid { background: #ECFDF3; color: #16803C; border-color: #ABEFC6; }
+.mmr-events .mmr-draft-chip { margin-left: 6px; }
+
+.mmr-settlement .mmr-events-chip.is-complete { border-color: #16803C; }
+.mmr-settlement .mmr-create-remaining { margin-left: auto; }
+
+.mmr-settlement .mmr-select-col,
+.mmr-settlement .mmr-select-cell { width: 44px; text-align: center; }
+.mmr-settlement .mmr-event-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.mmr-settlement .mmr-line-reason { display: block; margin-top: 2px; color: #B54708; font-size: 12px; }
+.mmr-settlement .mmr-settlement-table tr.is-selected td { background: #EDF4FF; }
+.mmr-settlement .mmr-settlement-table tr.mmr-member-line td { background: #FBFCFE; }
+.mmr-settlement .mmr-settlement-table tr.mmr-member-line.is-selected td { background: #EDF4FF; }
+.mmr-settlement .mmr-member-line__name { padding-left: 20px; box-shadow: inset 2px 0 0 #D8E3F0; }
+
+.mmr-settlement .mmr-selection-bar {
+	position: sticky;
+	top: 32px; /* below the WP admin bar */
+	z-index: 5;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 8px 0;
+	padding: 8px 12px;
+	background: #fff;
+	border: 1px solid #B2CCF5;
+	border-radius: 6px;
+	box-shadow: var(--mmr-shadow);
+}
+.mmr-settlement .mmr-selection-bar[hidden] { display: none; }
+.mmr-settlement .mmr-selection-bar__sum { font-variant-numeric: tabular-nums; font-weight: 600; }
+.mmr-settlement .mmr-selection-bar__error { color: var(--mmr-neg); }
+
+.mmr-settlement .mmr-event-panel {
+	margin: 8px 0 16px;
+	padding: 12px 16px;
+	background: #fff;
+	border: 1px solid var(--mmr-border);
+	border-radius: 6px;
+}
+.mmr-settlement .mmr-event-panel__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mmr-settlement .mmr-event-panel__head h3 { margin: 0; }
+.mmr-settlement .mmr-event-panel__lines td,
+.mmr-settlement .mmr-event-panel__lines th { padding: 4px 8px; text-align: left; }
+.mmr-settlement .mmr-event-panel__lines .mmr-num { text-align: right; }
+.mmr-settlement .mmr-event-panel__act { text-align: right; }
+.mmr-settlement .mmr-event-panel__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.mmr-pay-per-member .mmr-hint { display: block; }
+
 /* Tools --------------------------------------------------------------- */
 .mmr-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
 .mmr-tool-card { background: #fff; border: 1px solid var(--mmr-border); border-radius: 6px; padding: 16px; }
