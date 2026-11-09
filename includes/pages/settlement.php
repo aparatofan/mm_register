@@ -172,12 +172,49 @@ if ( $credit_panel_id ) {
 
 $credit_summaries = MMR_Data::credit_summaries( $credit_ids );
 
+/*
+ * Per-member credit (2.9). A rozliczenie class with "Members pay
+ * separately" and ≥ 2 current members gives every member their own balance
+ * (MMR_Data::is_per_member_credit() decides). Its class rows show the group
+ * chip; its member lines — whatever Settlement already lists for the month —
+ * show each member's chip. Pot classes are unchanged.
+ */
+$member_credit = array(); // class_id => member_credit_summaries().
+foreach ( MMR_Data::classes_by_ids( $credit_ids ) as $credit_class ) {
+	if ( MMR_Data::is_per_member_credit( $credit_class ) ) {
+		$member_credit[ (int) $credit_class->id ] = MMR_Data::member_credit_summaries( $credit_class->id );
+	}
+}
+
 /** The balance chip of one credit class — the same text the panel shows. */
-$render_credit_chip = function ( $class_id ) use ( $credit_summaries, $period ) {
+$render_credit_chip = function ( $class_id ) use ( $credit_summaries, $member_credit, $period ) {
 	$class_id = (int) $class_id;
 	$url = mmr_page_url( 'settlement', array( 'period' => $period, 'credit' => $class_id ) ) . '#mmr-credit-panel';
-	if ( isset( $credit_summaries[ $class_id ] ) ) {
+	if ( isset( $member_credit[ $class_id ] ) ) {
+		$state = $member_credit[ $class_id ]['group']['state'];
+		$text = $member_credit[ $class_id ]['group']['text'];
+	} elseif ( isset( $credit_summaries[ $class_id ] ) ) {
 		$summary = $credit_summaries[ $class_id ];
+		$state = $summary['state'];
+		$text = MMR_Data::credit_chip( $summary );
+	} else {
+		$state = 'none';
+		$text = __( 'No credit set', 'mm-register' );
+	}
+	echo '<a class="mmr-status-chip mmr-status-chip--' . esc_attr( $state ) . ' mmr-credit-chip" href="' . esc_url( $url ) . '">' . esc_html( $text ) . '</a>';
+};
+
+/**
+ * One member's chip in a per-member class. A student in the panel's list
+ * (current member, or former member with payments) gets their real chip;
+ * anyone else gets the neutral "No credit set".
+ */
+$render_member_chip = function ( $class_id, $student_id ) use ( $member_credit, $period ) {
+	$class_id = (int) $class_id;
+	$student_id = (int) $student_id;
+	$url = mmr_page_url( 'settlement', array( 'period' => $period, 'credit' => $class_id, 'member' => $student_id ) ) . '#mmr-credit-panel';
+	$summary = isset( $member_credit[ $class_id ]['members'][ $student_id ] ) ? $member_credit[ $class_id ]['members'][ $student_id ] : null;
+	if ( $summary ) {
 		$state = $summary['state'];
 		$text = MMR_Data::credit_chip( $summary );
 	} else {
@@ -194,6 +231,114 @@ $credit_money = function ( $grosze, $plus = false ) {
 		return '−' . mmr_money( abs( $grosze ) / 100 );
 	}
 	return ( $plus ? '+' : '' ) . mmr_money( $grosze / 100 );
+};
+
+/**
+ * The four fact tiles and the ledger of one balance — a class pot, or one
+ * member in per-member mode. Same markup for both.
+ *
+ * @param array $sum    credit_summaries() / member_credit_summaries() entry.
+ * @param array $ledger credit_ledger() / member_credit_ledger() items.
+ */
+$render_credit_body = function ( $sum, $ledger ) use ( $credit_money ) {
+	$today = current_time( 'Y-m-d' );
+	?>
+	<div class="mmr-credit-facts">
+		<div class="mmr-credit-fact">
+			<span class="mmr-credit-fact__label"><?php esc_html_e( 'Paid in', 'mm-register' ); ?></span>
+			<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $sum['paid'] ) ); ?></strong>
+			<span class="mmr-credit-fact__sub">
+				<?php
+				/* translators: 1: number of payments, 2: date of the first payment. */
+				echo esc_html( sprintf( _n( '%1$d payment since %2$s', '%1$d payments since %2$s', $sum['payments'], 'mm-register' ), $sum['payments'], mmr_date_label( $sum['start'] ) ) );
+				?>
+			</span>
+		</div>
+		<div class="mmr-credit-fact">
+			<span class="mmr-credit-fact__label"><?php esc_html_e( 'Used', 'mm-register' ); ?></span>
+			<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $sum['used'] ) ); ?></strong>
+			<span class="mmr-credit-fact__sub">
+				<?php
+				/* translators: %d: lessons taught since the credit started. */
+				echo esc_html( sprintf( _n( '%d lesson', '%d lessons', $sum['taught'], 'mm-register' ), $sum['taught'] ) );
+				?>
+			</span>
+		</div>
+		<div class="mmr-credit-fact">
+			<span class="mmr-credit-fact__label"><?php esc_html_e( 'Left now', 'mm-register' ); ?></span>
+			<strong class="mmr-credit-fact__value<?php echo $sum['left'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $sum['left'] ) ); ?></strong>
+			<span class="mmr-credit-fact__sub">
+				<?php
+				if ( $sum['left'] < 0 ) {
+					/* translators: %s: amount owed beyond the credit. */
+					echo esc_html( sprintf( __( 'owes %s', 'mm-register' ), mmr_money( abs( $sum['left'] ) / 100 ) ) );
+				} elseif ( null !== $sum['left_lessons'] ) {
+					/* translators: %d: lessons the balance still covers. */
+					echo esc_html( sprintf( _n( '≈ %d lesson', '≈ %d lessons', $sum['left_lessons'], 'mm-register' ), $sum['left_lessons'] ) );
+				}
+				?>
+			</span>
+		</div>
+		<div class="mmr-credit-fact">
+			<span class="mmr-credit-fact__label"><?php esc_html_e( 'After booked', 'mm-register' ); ?></span>
+			<strong class="mmr-credit-fact__value<?php echo $sum['projected'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $sum['projected'] ) ); ?></strong>
+			<span class="mmr-credit-fact__sub">
+				<?php
+				if ( $sum['booked'] > 0 ) {
+					/* translators: %d: lessons booked after today. */
+					echo esc_html( sprintf( _n( '%d booked ahead', '%d booked ahead', $sum['booked'], 'mm-register' ), $sum['booked'] ) );
+				} else {
+					esc_html_e( 'nothing booked ahead', 'mm-register' );
+				}
+				?>
+			</span>
+		</div>
+	</div>
+
+	<div class="mmr-credit-ledger-scroll">
+		<table class="mmr-subtable mmr-credit-ledger">
+			<thead>
+				<tr>
+					<th scope="col"><?php esc_html_e( 'Date', 'mm-register' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Item', 'mm-register' ); ?></th>
+					<th scope="col" class="mmr-num"><?php esc_html_e( 'Amount', 'mm-register' ); ?></th>
+					<th scope="col" class="mmr-num"><?php esc_html_e( 'Balance', 'mm-register' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php
+				$rule_done = false;
+				foreach ( $ledger as $item ) :
+					if ( 'booked' === $item['kind'] && ! $rule_done ) :
+						$rule_done = true;
+						?>
+						<tr class="mmr-credit-ledger__today">
+							<td colspan="4">
+								<span class="screen-reader-text">
+									<?php
+									/* translators: %s: today's date. */
+									echo esc_html( sprintf( __( 'Today, %s — booked lessons below', 'mm-register' ), mmr_date_label( $today ) ) );
+									?>
+								</span>
+							</td>
+						</tr>
+					<?php endif; ?>
+					<tr class="mmr-credit-ledger__<?php echo esc_attr( $item['kind'] ); ?>">
+						<td><?php echo esc_html( mmr_date_label( $item['date'] ) ); ?></td>
+						<td>
+							<?php echo esc_html( $item['label'] ); ?>
+							<?php if ( '' !== $item['note'] ) : ?>
+								<span class="mmr-muted"> — <?php echo esc_html( $item['note'] ); ?></span>
+							<?php endif; ?>
+						</td>
+						<td class="mmr-num"><?php echo esc_html( $credit_money( $item['amount'], 'payment' === $item['kind'] ) ); ?></td>
+						<td class="mmr-num<?php echo $item['balance'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $item['balance'] ) ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+	</div>
+	<?php
 };
 
 /**
@@ -449,9 +594,34 @@ $line_attrs = function ( $line ) {
 
 	<?php if ( $credit_panel ) :
 		$cp_id = (int) $credit_panel->id;
-		$cp_sum = isset( $credit_summaries[ $cp_id ] ) ? $credit_summaries[ $cp_id ] : null;
-		$cp_ledger = $cp_sum ? MMR_Data::credit_ledger( $cp_id ) : array();
 		$cp_today = current_time( 'Y-m-d' );
+		$cp_close = mmr_page_url( 'settlement', array( 'period' => $period ) );
+		$cp_group = isset( $member_credit[ $cp_id ] ) ? $member_credit[ $cp_id ] : null;
+		if ( $cp_group ) {
+			// Selected member: a valid `member` param, else the one needing
+			// attention most (danger → warn → none → good, then lowest left).
+			$cp_member = isset( $_GET['member'] ) ? absint( $_GET['member'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification
+			if ( ! isset( $cp_group['roster'][ $cp_member ] ) ) {
+				$cp_member = 0;
+				$cp_rank = array( 'danger' => 0, 'warn' => 1, 'none' => 2, 'good' => 3 );
+				$cp_best = null;
+				foreach ( $cp_group['members'] as $sid => $msum ) {
+					$key = array( $cp_rank[ $msum ? $msum['state'] : 'none' ], $msum ? $msum['left'] : 0 );
+					if ( null === $cp_best || $key < $cp_best ) {
+						$cp_best = $key;
+						$cp_member = (int) $sid;
+					}
+				}
+			}
+			$cp_sum = $cp_member ? $cp_group['members'][ $cp_member ] : null;
+			$cp_ledger = $cp_sum ? MMR_Data::member_credit_ledger( $cp_id, $cp_member ) : array();
+			$cp_current = array_filter( $cp_group['roster'], function ( $info ) {
+				return ! $info['former'];
+			} );
+		} else {
+			$cp_sum = isset( $credit_summaries[ $cp_id ] ) ? $credit_summaries[ $cp_id ] : null;
+			$cp_ledger = $cp_sum ? MMR_Data::credit_ledger( $cp_id ) : array();
+		}
 		?>
 		<section id="mmr-credit-panel" class="mmr-event-panel mmr-credit-panel" aria-labelledby="mmr-credit-panel-title">
 			<header class="mmr-event-panel__head">
@@ -462,105 +632,72 @@ $line_attrs = function ( $line ) {
 					?>
 				</h3>
 				<?php $render_credit_chip( $cp_id ); ?>
-				<a class="button-link mmr-credit-panel__close" href="<?php echo esc_url( mmr_page_url( 'settlement', array( 'period' => $period ) ) ); ?>"><?php esc_html_e( 'Close', 'mm-register' ); ?></a>
+				<a class="button-link mmr-credit-panel__close" href="<?php echo esc_url( $cp_close ); ?>"><?php esc_html_e( 'Close', 'mm-register' ); ?></a>
 			</header>
 
-			<?php if ( $cp_sum ) : ?>
-				<div class="mmr-credit-facts">
-					<div class="mmr-credit-fact">
-						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Paid in', 'mm-register' ); ?></span>
-						<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $cp_sum['paid'] ) ); ?></strong>
-						<span class="mmr-credit-fact__sub">
-							<?php
-							/* translators: 1: number of payments, 2: date of the first payment. */
-							echo esc_html( sprintf( _n( '%1$d payment since %2$s', '%1$d payments since %2$s', $cp_sum['payments'], 'mm-register' ), $cp_sum['payments'], mmr_date_label( $cp_sum['start'] ) ) );
+			<?php if ( $cp_group ) : ?>
+				<table class="mmr-subtable mmr-credit-members">
+					<thead>
+						<tr>
+							<th scope="col"><?php esc_html_e( 'Member', 'mm-register' ); ?></th>
+							<th scope="col" class="mmr-num"><?php esc_html_e( 'Paid in', 'mm-register' ); ?></th>
+							<th scope="col" class="mmr-num"><?php esc_html_e( 'Used', 'mm-register' ); ?></th>
+							<th scope="col" class="mmr-num"><?php esc_html_e( 'Left now', 'mm-register' ); ?></th>
+							<th scope="col"><?php esc_html_e( 'Status', 'mm-register' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $cp_group['roster'] as $sid => $info ) :
+							$msum = $cp_group['members'][ $sid ];
 							?>
-						</span>
-					</div>
-					<div class="mmr-credit-fact">
-						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Used', 'mm-register' ); ?></span>
-						<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $cp_sum['used'] ) ); ?></strong>
-						<span class="mmr-credit-fact__sub">
-							<?php
-							/* translators: %d: lessons taught since the credit started. */
-							echo esc_html( sprintf( _n( '%d lesson', '%d lessons', $cp_sum['taught'], 'mm-register' ), $cp_sum['taught'] ) );
-							?>
-						</span>
-					</div>
-					<div class="mmr-credit-fact">
-						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Left now', 'mm-register' ); ?></span>
-						<strong class="mmr-credit-fact__value<?php echo $cp_sum['left'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $cp_sum['left'] ) ); ?></strong>
-						<span class="mmr-credit-fact__sub">
-							<?php
-							if ( $cp_sum['left'] < 0 ) {
-								/* translators: %s: amount owed beyond the credit. */
-								echo esc_html( sprintf( __( 'owes %s', 'mm-register' ), mmr_money( abs( $cp_sum['left'] ) / 100 ) ) );
-							} elseif ( null !== $cp_sum['left_lessons'] ) {
-								/* translators: %d: lessons the balance still covers. */
-								echo esc_html( sprintf( _n( '≈ %d lesson', '≈ %d lessons', $cp_sum['left_lessons'], 'mm-register' ), $cp_sum['left_lessons'] ) );
-							}
-							?>
-						</span>
-					</div>
-					<div class="mmr-credit-fact">
-						<span class="mmr-credit-fact__label"><?php esc_html_e( 'After booked', 'mm-register' ); ?></span>
-						<strong class="mmr-credit-fact__value<?php echo $cp_sum['projected'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $cp_sum['projected'] ) ); ?></strong>
-						<span class="mmr-credit-fact__sub">
-							<?php
-							if ( $cp_sum['booked'] > 0 ) {
-								/* translators: %d: lessons booked after today. */
-								echo esc_html( sprintf( _n( '%d booked ahead', '%d booked ahead', $cp_sum['booked'], 'mm-register' ), $cp_sum['booked'] ) );
-							} else {
-								esc_html_e( 'nothing booked ahead', 'mm-register' );
-							}
-							?>
-						</span>
-					</div>
-				</div>
-
-				<div class="mmr-credit-ledger-scroll">
-					<table class="mmr-subtable mmr-credit-ledger">
-						<thead>
-							<tr>
-								<th scope="col"><?php esc_html_e( 'Date', 'mm-register' ); ?></th>
-								<th scope="col"><?php esc_html_e( 'Item', 'mm-register' ); ?></th>
-								<th scope="col" class="mmr-num"><?php esc_html_e( 'Amount', 'mm-register' ); ?></th>
-								<th scope="col" class="mmr-num"><?php esc_html_e( 'Balance', 'mm-register' ); ?></th>
+							<tr class="<?php echo (int) $sid === $cp_member ? 'is-selected' : ''; ?>"<?php echo (int) $sid === $cp_member ? ' aria-current="true"' : ''; ?>>
+								<td>
+									<?php echo esc_html( $info['name'] ); ?>
+									<?php if ( $info['former'] ) : ?>
+										<span class="mmr-muted"><?php esc_html_e( '(no longer in class)', 'mm-register' ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td class="mmr-num"><?php echo $msum ? esc_html( $credit_money( $msum['paid'] ) ) : '—'; ?></td>
+								<td class="mmr-num"><?php echo $msum ? esc_html( $credit_money( $msum['used'] ) ) : '—'; ?></td>
+								<td class="mmr-num<?php echo ( $msum && $msum['left'] < 0 ) ? ' mmr-credit-neg' : ''; ?>"><?php echo $msum ? esc_html( $credit_money( $msum['left'] ) ) : '—'; ?></td>
+								<td><?php $render_member_chip( $cp_id, $sid ); ?></td>
 							</tr>
-						</thead>
-						<tbody>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+
+				<?php if ( $cp_group['unassigned']['count'] ) : ?>
+					<p class="mmr-muted mmr-small mmr-credit-unassigned">
+						<?php
+						$cp_un = $cp_group['unassigned'];
+						/* translators: 1: number of payments, 2: their total. */
+						echo esc_html( sprintf( _n( '%1$d payment (%2$s) isn’t assigned to a member. Assign it in the class form.', '%1$d payments (%2$s) aren’t assigned to a member. Assign them in the class form.', $cp_un['count'], 'mm-register' ), $cp_un['count'], mmr_money( $cp_un['sum'] / 100 ) ) );
+						?>
+					</p>
+				<?php endif; ?>
+
+				<?php if ( $cp_member ) :
+					$cp_name = $cp_group['roster'][ $cp_member ]['name'];
+					?>
+					<h4 class="mmr-credit-member-title">
+						<?php
+						/* translators: %s: member name. */
+						printf( esc_html__( '%s’s balance', 'mm-register' ), esc_html( $cp_name ) );
+						?>
+					</h4>
+					<?php if ( $cp_sum ) : ?>
+						<?php $render_credit_body( $cp_sum, $cp_ledger ); ?>
+					<?php else : ?>
+						<p class="mmr-muted">
 							<?php
-							$cp_rule_done = false;
-							foreach ( $cp_ledger as $item ) :
-								if ( 'booked' === $item['kind'] && ! $cp_rule_done ) :
-									$cp_rule_done = true;
-									?>
-									<tr class="mmr-credit-ledger__today">
-										<td colspan="4">
-											<span class="screen-reader-text">
-												<?php
-												/* translators: %s: today's date. */
-												echo esc_html( sprintf( __( 'Today, %s — booked lessons below', 'mm-register' ), mmr_date_label( $cp_today ) ) );
-												?>
-											</span>
-										</td>
-									</tr>
-								<?php endif; ?>
-								<tr class="mmr-credit-ledger__<?php echo esc_attr( $item['kind'] ); ?>">
-									<td><?php echo esc_html( mmr_date_label( $item['date'] ) ); ?></td>
-									<td>
-										<?php echo esc_html( $item['label'] ); ?>
-										<?php if ( '' !== $item['note'] ) : ?>
-											<span class="mmr-muted"> — <?php echo esc_html( $item['note'] ); ?></span>
-										<?php endif; ?>
-									</td>
-									<td class="mmr-num"><?php echo esc_html( $credit_money( $item['amount'], 'payment' === $item['kind'] ) ); ?></td>
-									<td class="mmr-num<?php echo $item['balance'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $item['balance'] ) ); ?></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
-				</div>
+							/* translators: %s: member name. */
+							printf( esc_html__( '%s has no payment recorded yet. Add their first payment below — its date starts their countdown.', 'mm-register' ), esc_html( $cp_name ) );
+							?>
+						</p>
+					<?php endif; ?>
+				<?php endif; ?>
+			<?php elseif ( $cp_sum ) : ?>
+				<?php $render_credit_body( $cp_sum, $cp_ledger ); ?>
 			<?php else : ?>
 				<p class="mmr-muted"><?php esc_html_e( 'No credit recorded for this class yet. Add the first payment below — its date starts the countdown.', 'mm-register' ); ?></p>
 			<?php endif; ?>
@@ -574,6 +711,16 @@ $line_attrs = function ( $line ) {
 					<span><?php esc_html_e( 'Date', 'mm-register' ); ?></span>
 					<input type="date" name="credit_date" value="<?php echo esc_attr( $cp_today ); ?>" required>
 				</label>
+				<?php if ( $cp_group ) : ?>
+					<label>
+						<span><?php esc_html_e( 'Paid by', 'mm-register' ); ?></span>
+						<select name="credit_student" required>
+							<?php foreach ( $cp_current as $sid => $info ) : ?>
+								<option value="<?php echo esc_attr( $sid ); ?>"<?php selected( (int) $sid, $cp_member ); ?>><?php echo esc_html( $info['name'] ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+				<?php endif; ?>
 				<label>
 					<span><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></span>
 					<input type="text" name="amount" class="mmr-input-fee" inputmode="decimal" required>
@@ -716,7 +863,7 @@ $line_attrs = function ( $line ) {
 							<td class="mmr-member-line__name"><?php echo esc_html( $ml['name'] ); ?></td>
 							<td></td>
 							<td></td>
-							<td></td>
+							<td><?php if ( isset( $member_credit[ (int) $row['class_id'] ] ) ) { $render_member_chip( $row['class_id'], $ml['student_id'] ); } ?></td>
 							<td class="mmr-num"><?php echo (int) $ml['lesson_count']; ?></td>
 							<td class="mmr-muted">
 								<?php if ( $mb_row ) : ?>

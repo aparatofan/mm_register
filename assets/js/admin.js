@@ -128,9 +128,19 @@
 	 * Class members repeater
 	 * ------------------------------------------------------------- */
 
+	/* Member picks are set from code, so no native event says the member
+	   list changed. Anything that mirrors it (the credit Paid by column)
+	   listens for this instead. Fired on the rows box; it bubbles. */
+	function membersChanged( node ) {
+		if ( node ) {
+			node.dispatchEvent( new CustomEvent( 'mmr:members-changed', { bubbles: true } ) );
+		}
+	}
+
 	function clearMembers( modal ) {
 		var rows = modal.querySelector( '#mmr-members-rows' );
 		if ( rows ) { rows.innerHTML = ''; }
+		membersChanged( rows );
 	}
 
 	function addMemberRow( modal, member ) {
@@ -149,6 +159,7 @@
 			if ( share ) { share.value = ( member.share === null || member.share === '' ) ? '' : member.share; }
 		}
 		rows.appendChild( frag );
+		membersChanged( rows );
 		// A row added by hand is for typing into straight away.
 		if ( ! member && search ) { search.focus(); }
 	}
@@ -169,7 +180,11 @@
 			if ( e.target.classList && e.target.classList.contains( 'mmr-remove-member' ) ) {
 				e.preventDefault();
 				var row = e.target.closest( '.mmr-member-row' );
-				if ( row ) { row.remove(); }
+				if ( row ) {
+					var rowsBox = row.parentNode;
+					row.remove();
+					membersChanged( rowsBox );
+				}
 			}
 		} );
 		initMemberSearch();
@@ -264,6 +279,7 @@
 			p.search.value = student.name;
 			p.search.setCustomValidity( '' );
 			hide( row );
+			membersChanged( rowsBox );
 			var share = row.querySelector( '.mmr-member-share' );
 			if ( share ) { share.focus(); }
 		}
@@ -313,9 +329,11 @@
 			if ( ! e.target.classList.contains( 'mmr-member-search' ) ) { return; }
 			var row = e.target.closest( '.mmr-member-row' );
 			var p = parts( row );
+			var hadPick = '0' !== p.id.value;
 			p.id.value = '0';
 			p.search.setCustomValidity( '' );
 			show( row );
+			if ( hadPick ) { membersChanged( rowsBox ); }
 		} );
 
 		// Focus alone opens the list, as on the Events "Who" field.
@@ -337,6 +355,7 @@
 			if ( 1 === exact.length && takenIds( row ).indexOf( exact[ 0 ].id ) < 0 ) {
 				p.id.value = String( exact[ 0 ].id );
 				p.search.value = exact[ 0 ].name;
+				membersChanged( rowsBox );
 			}
 		} );
 
@@ -455,7 +474,15 @@
 		var date = frag.querySelector( '.mmr-credit-date' );
 		var amount = frag.querySelector( '.mmr-credit-amount' );
 		var note = frag.querySelector( '.mmr-credit-note' );
+		var payer = frag.querySelector( '.mmr-credit-student' );
 		if ( credit ) {
+			/* The saved payer rides on the select, so it can be offered as
+			   "(no longer in class)" once they are no longer a member row. */
+			if ( payer && credit.student_id ) {
+				payer.setAttribute( 'data-saved-id', String( credit.student_id ) );
+				payer.setAttribute( 'data-saved-name', credit.student_name || '' );
+				payer.setAttribute( 'data-want', String( credit.student_id ) );
+			}
 			if ( date ) { date.value = credit.date || ''; }
 			if ( amount ) { amount.value = ( null === credit.amount || undefined === credit.amount ) ? '' : credit.amount; }
 			if ( note ) { note.value = credit.note || ''; }
@@ -464,9 +491,10 @@
 		}
 		/* A row added while the box is hidden must not post either. */
 		if ( box.hidden ) {
-			frag.querySelectorAll( 'input' ).forEach( function ( input ) { input.disabled = true; } );
+			frag.querySelectorAll( 'input, select' ).forEach( function ( input ) { input.disabled = true; } );
 		}
 		rows.appendChild( frag );
+		syncCreditPayers( box );
 		updateCreditButton( box );
 		if ( ! credit && amount && ! box.hidden ) { amount.focus(); }
 	}
@@ -478,9 +506,71 @@
 		} );
 	}
 
+	/* Members currently picked in the modal: [ { id, name } ]. */
+	function modalMembers( box ) {
+		var form = box.closest( 'form' );
+		var rows = form ? form.querySelector( '#mmr-members-rows' ) : null;
+		var out = [];
+		if ( ! rows ) { return out; }
+		rows.querySelectorAll( '.mmr-member-row' ).forEach( function ( row ) {
+			var id = row.querySelector( '.mmr-member-id' );
+			var search = row.querySelector( '.mmr-member-search' );
+			if ( id && '0' !== id.value && '' !== id.value ) {
+				out.push( { id: id.value, name: search ? search.value.trim() : id.value } );
+			}
+		} );
+		return out;
+	}
+
+	/* Per-member credit (2.9): rebuild every Paid by select from the member
+	   rows, and show the column only while "Members pay separately" is
+	   ticked and at least two members are picked. Outside that mode the
+	   selects are hidden but not disabled, so a stored payer still posts and
+	   switching modes never rewrites it. The server decides the mode again
+	   from the posted data. */
+	function syncCreditPayers( box ) {
+		var form = box.closest( 'form' );
+		var members = modalMembers( box );
+		var ppm = form ? form.querySelector( '[data-field="pay_per_member"]' ) : null;
+		var perMember = !! ( ppm && ppm.checked ) && members.length >= 2;
+
+		box.querySelectorAll( '#mmr-credit-rows select.mmr-credit-student' ).forEach( function ( select ) {
+			var want = select.getAttribute( 'data-want' );
+			var current = ( null !== want ) ? want : select.value;
+			select.removeAttribute( 'data-want' );
+			var first = select.options[ 0 ];
+			select.innerHTML = '';
+			select.appendChild( first );
+			var found = false;
+			members.forEach( function ( m ) {
+				var opt = el( 'option', { value: m.id }, m.name );
+				select.appendChild( opt );
+				if ( m.id === current ) { found = true; }
+			} );
+			var savedId = select.getAttribute( 'data-saved-id' );
+			if ( ! found && savedId && savedId === current ) {
+				var label = ( select.getAttribute( 'data-former' ) || '%s (no longer in class)' )
+					.replace( '%s', select.getAttribute( 'data-saved-name' ) || ( '#' + savedId ) );
+				select.appendChild( el( 'option', { value: savedId }, label ) );
+				found = true;
+			}
+			select.value = found ? current : '0';
+		} );
+
+		box.classList.toggle( 'is-per-member', perMember );
+		var hint = box.querySelector( '.mmr-credit-hint' );
+		if ( hint ) {
+			hint.textContent = hint.getAttribute( perMember ? 'data-per-member' : 'data-pot' );
+		}
+		var ppmHint = form ? form.querySelector( '#mmr-pay-per-member-hint' ) : null;
+		if ( ppmHint && ppmHint.hasAttribute( 'data-plain' ) ) {
+			ppmHint.textContent = ppmHint.getAttribute( box.hidden ? 'data-plain' : 'data-credit' );
+		}
+	}
+
 	function setCreditBoxVisible( box, show ) {
 		box.hidden = ! show;
-		box.querySelectorAll( 'input' ).forEach( function ( input ) {
+		box.querySelectorAll( 'input, select' ).forEach( function ( input ) {
 			input.disabled = ! show;
 		} );
 		/* Shown with nothing entered yet: offer one row dated today. */
@@ -496,6 +586,7 @@
 				}
 			}
 		}
+		syncCreditPayers( box );
 	}
 
 	function initCreditRepeater() {
@@ -517,6 +608,11 @@
 			} );
 		}
 		settleInput.addEventListener( 'input', sync );
+		if ( form ) {
+			form.addEventListener( 'mmr:members-changed', function () { syncCreditPayers( box ); } );
+			var ppm = form.querySelector( '[data-field="pay_per_member"]' );
+			if ( ppm ) { ppm.addEventListener( 'change', function () { syncCreditPayers( box ); } ); }
+		}
 
 		box.addEventListener( 'click', function ( e ) {
 			if ( e.target.id === 'mmr-add-credit' ) {

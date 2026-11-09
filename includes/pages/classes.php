@@ -33,6 +33,17 @@ $all_companies = MMR_Data::companies( array( 'status' => 'all' ) );
 $company_names = MMR_Data::company_names(); // id => name, all statuses.
 // Prepaid-credit payments for every listed class, in one query.
 $class_credits = MMR_Data::credits_for_classes( wp_list_pluck( $classes, 'id' ) );
+// Names of everyone a payment is assigned to (any status), one query, so a
+// former member's payment still shows who paid in the Paid by column.
+$credit_payer_ids = array();
+foreach ( $class_credits as $credit_list ) {
+	foreach ( $credit_list as $credit ) {
+		if ( $credit['student_id'] ) {
+			$credit_payer_ids[] = $credit['student_id'];
+		}
+	}
+}
+$credit_payers = MMR_Data::students_by_ids( $credit_payer_ids );
 
 // Filters echoed back by row-action forms so archiving keeps the current view.
 $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $type_filter );
@@ -118,9 +129,11 @@ if ( $company_filter ) {
 				$credit_json = array();
 				foreach ( isset( $class_credits[ (int) $class->id ] ) ? $class_credits[ (int) $class->id ] : array() as $credit ) {
 					$credit_json[] = array(
-						'date'   => $credit['credit_date'],
-						'amount' => $credit['amount'],
-						'note'   => $credit['note'],
+						'date'         => $credit['credit_date'],
+						'student_id'   => $credit['student_id'],
+						'student_name' => isset( $credit_payers[ $credit['student_id'] ] ) ? $credit_payers[ $credit['student_id'] ]->name : '',
+						'amount'       => $credit['amount'],
+						'note'         => $credit['note'],
 					);
 				}
 				$json = wp_json_encode( array(
@@ -243,10 +256,13 @@ if ( $company_filter ) {
 							data-add-first="<?php esc_attr_e( '+ Add credit', 'mm-register' ); ?>"
 							data-add-more="<?php esc_attr_e( '+ Add top-up', 'mm-register' ); ?>">
 							<h3 class="mmr-credit-box__title"><?php esc_html_e( 'Prepaid credit', 'mm-register' ); ?></h3>
-							<p class="mmr-hint"><?php esc_html_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?></p>
+							<p class="mmr-hint mmr-credit-hint"
+								data-pot="<?php esc_attr_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?>"
+								data-per-member="<?php esc_attr_e( 'Members pay separately, so each payment belongs to one member. Each member’s balance is what they paid minus their share of every lesson since their own first payment.', 'mm-register' ); ?>"><?php esc_html_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?></p>
 							<input type="hidden" name="credits_present" value="1">
 							<div class="mmr-credit-row mmr-credit-row--head" aria-hidden="true">
 								<span><?php esc_html_e( 'Date', 'mm-register' ); ?></span>
+								<span class="mmr-credit-col-payer"><?php esc_html_e( 'Paid by', 'mm-register' ); ?></span>
 								<span><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></span>
 								<span><?php esc_html_e( 'Note', 'mm-register' ); ?></span>
 								<span></span>
@@ -256,6 +272,11 @@ if ( $company_filter ) {
 							<template id="mmr-credit-row-template">
 								<div class="mmr-credit-row">
 									<input type="date" name="credit_date[]" class="mmr-credit-date" aria-label="<?php esc_attr_e( 'Payment date', 'mm-register' ); ?>">
+									<?php /* Hidden but never disabled outside per-member mode, so the stored payer still posts (switching modes never rewrites it). */ ?>
+									<select name="credit_student[]" class="mmr-credit-student mmr-credit-col-payer" aria-label="<?php esc_attr_e( 'Paid by', 'mm-register' ); ?>"
+										data-former="<?php esc_attr_e( '%s (no longer in class)', 'mm-register' ); ?>">
+										<option value="0"><?php esc_html_e( 'Choose…', 'mm-register' ); ?></option>
+									</select>
 									<input type="text" inputmode="decimal" name="credit_amount[]" class="mmr-credit-amount" aria-label="<?php esc_attr_e( 'Payment amount (zł)', 'mm-register' ); ?>">
 									<input type="text" maxlength="190" name="credit_note[]" class="mmr-credit-note" aria-label="<?php esc_attr_e( 'Payment note', 'mm-register' ); ?>">
 									<button type="button" class="button-link mmr-remove-credit" aria-label="<?php esc_attr_e( 'Remove payment', 'mm-register' ); ?>">✕</button>
@@ -279,7 +300,9 @@ if ( $company_filter ) {
 					<p><button type="button" class="button" id="mmr-add-member"><?php esc_html_e( '+ Add member', 'mm-register' ); ?></button></p>
 					<p class="mmr-field mmr-pay-per-member">
 						<label class="mmr-check"><input type="checkbox" name="pay_per_member" value="1" data-field="pay_per_member" aria-describedby="mmr-pay-per-member-hint"> <?php esc_html_e( 'Members pay separately', 'mm-register' ); ?></label>
-						<span class="mmr-hint" id="mmr-pay-per-member-hint"><?php esc_html_e( 'Each member gets their own event — an equal share unless a share is set.', 'mm-register' ); ?></span>
+						<span class="mmr-hint" id="mmr-pay-per-member-hint"
+							data-plain="<?php esc_attr_e( 'Each member gets their own event — an equal share unless a share is set.', 'mm-register' ); ?>"
+							data-credit="<?php esc_attr_e( 'Each member gets their own event and their own prepaid balance — an equal share unless a share is set.', 'mm-register' ); ?>"><?php esc_html_e( 'Each member gets their own event — an equal share unless a share is set.', 'mm-register' ); ?></span>
 					</p>
 
 					<?php

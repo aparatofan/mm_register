@@ -320,16 +320,25 @@ class MMR_DB {
 		// The earliest `credit_date` starts the countdown: lessons on or after
 		// it draw the balance down. The balance itself is computed from the
 		// lessons' fee snapshots and is never stored here.
+		//
+		// v2.6 (per-member credit): `student_id` records who paid. In
+		// per-member mode (rozliczenie + Members pay separately + ≥ 2 current
+		// members) each member has their own balance, drawn from their share
+		// in each lesson's shares_snapshot. NULL means unassigned, or a pot
+		// class where the payer does not matter. Switching modes never
+		// rewrites it. dbDelta adds the column; existing rows get NULL.
 		$sql[] = "CREATE TABLE {$class_credits} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			class_id BIGINT UNSIGNED NOT NULL,
+			student_id BIGINT UNSIGNED NULL DEFAULT NULL,
 			credit_date DATE NOT NULL,
 			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 			note VARCHAR(190) NULL DEFAULT NULL,
 			created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
 			PRIMARY KEY  (id),
 			KEY class_id (class_id),
-			KEY class_date (class_id, credit_date)
+			KEY class_date (class_id, credit_date),
+			KEY class_student (class_id, student_id)
 		) {$charset_collate};";
 
 		foreach ( $sql as $statement ) {

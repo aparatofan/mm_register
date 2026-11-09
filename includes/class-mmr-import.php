@@ -271,7 +271,9 @@ class MMR_Import {
 			// Prepaid-credit payments (v6). Validated exactly like the class
 			// form; an invalid entry is skipped. Kept whatever the settle
 			// method — payments of a class switched away from rozliczenie
-			// are hidden, not deleted, so they round-trip too.
+			// are hidden, not deleted, so they round-trip too. Who paid (v7)
+			// resolves `student_ref` like members do; absent or unresolved
+			// means NULL (unassigned / pot), so v6 files import unchanged.
 			if ( isset( $class['credits'] ) && is_array( $class['credits'] ) ) {
 				$credits = array();
 				foreach ( $class['credits'] as $credit ) {
@@ -286,6 +288,8 @@ class MMR_Import {
 					if ( is_wp_error( $row ) ) {
 						continue;
 					}
+					$pref = isset( $credit['student_ref'] ) ? (string) $credit['student_ref'] : '';
+					$row['student_id'] = ( '' !== $pref && isset( $student_map[ $pref ] ) ) ? $student_map[ $pref ] : 0;
 					$credits[] = $row;
 					$imported['credits']++;
 				}
@@ -357,7 +361,7 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 6,
+			'version'        => 7,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
 			'companies'      => array(),
@@ -414,9 +418,10 @@ class MMR_Import {
 			$credits = array();
 			foreach ( isset( $all_credits[ (int) $c->id ] ) ? $all_credits[ (int) $c->id ] : array() as $credit ) {
 				$credits[] = array(
-					'date'   => $credit['credit_date'],
-					'amount' => (float) $credit['amount'],
-					'note'   => $credit['note'],
+					'date'        => $credit['credit_date'],
+					'student_ref' => ( $credit['student_id'] && isset( $student_ref[ $credit['student_id'] ] ) ) ? $student_ref[ $credit['student_id'] ] : null,
+					'amount'      => (float) $credit['amount'],
+					'note'        => $credit['note'],
 				);
 			}
 			$out['classes'][] = array(

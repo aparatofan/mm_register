@@ -796,11 +796,17 @@
 	margin: 0;
 }
 .mmr-credit-row--head { font-size: 12px; font-weight: 600; color: var(--mmr-muted); margin-bottom: 4px; }
+/* Paid by (2.9): only in per-member mode. Hidden, never disabled, outside it. */
+.mmr-credit-box .mmr-credit-col-payer { display: none; }
+.mmr-credit-box.is-per-member .mmr-credit-col-payer { display: block; }
+.mmr-credit-box.is-per-member .mmr-credit-row { grid-template-columns: 150px minmax(0, 180px) 120px minmax(0, 1fr) 32px; }
+.mmr-credit-row > select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
 
 @media (max-width: 640px) {
 	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }
 	.mmr-member-row { grid-template-columns: minmax(0, 1fr); }
-	.mmr-credit-row { grid-template-columns: minmax(0, 1fr); }
+	.mmr-credit-row,
+	.mmr-credit-box.is-per-member .mmr-credit-row { grid-template-columns: minmax(0, 1fr); }
 	.mmr-credit-row--head { display: none; }
 }
 
@@ -915,6 +921,13 @@
 .mmr-settlement .mmr-credit-topup__note { flex: 1 1 200px; }
 .mmr-settlement .mmr-credit-topup__note input { width: 100%; box-sizing: border-box; }
 .mmr-settlement .mmr-credit-panel__close { margin-left: auto; }
+
+/* Per-member credit (2.9): the members table and the selected member. */
+.mmr-settlement .mmr-credit-members { margin: 12px 0 4px; background: #fff; }
+.mmr-settlement .mmr-credit-members .mmr-num { text-align: right; font-variant-numeric: tabular-nums; }
+.mmr-settlement .mmr-credit-members tr.is-selected td { background: #EDF4FF; }
+.mmr-settlement .mmr-credit-unassigned { margin: 4px 0 0; }
+.mmr-settlement .mmr-credit-member-title { margin: 16px 0 0; }
 
 /* Tools --------------------------------------------------------------- */
 .mmr-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
