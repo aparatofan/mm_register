@@ -39,6 +39,25 @@ function mmr_sanitize_money( $value ) {
 }
 
 /**
+ * True when a typed money value is a number at all (`1 234,56 zł`, `1234.56`
+ * …), using the same clean-up as mmr_sanitize_money(). That function turns
+ * junk into 0.0, so callers that must tell "0" from "unparseable" ask here.
+ *
+ * @param mixed $value Raw input.
+ * @return bool
+ */
+function mmr_money_is_parseable( $value ) {
+	if ( is_int( $value ) || is_float( $value ) ) {
+		return true;
+	}
+	if ( ! is_string( $value ) ) {
+		return false;
+	}
+	$value = str_replace( array( "\xc2\xa0", ' ', 'zł', 'zl' ), '', $value );
+	return is_numeric( str_replace( ',', '.', $value ) );
+}
+
+/**
  * Validate & normalise a period string `YYYY-MM`.
  *
  * @param string $period Raw period.

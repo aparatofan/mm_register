@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.7.0
+Stable tag: 2.8.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,16 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.8.0 =
+* Prepaid credit for rozliczenie classes: payments (credit + top-ups) on the
+  class form, a balance chip on Settlement rows (good / running low / used up /
+  overdrawn) and a credit panel with facts, ledger and a top-up form. The
+  balance is computed from lesson fee snapshots, never stored. DB version 2.5
+  adds mmr_class_credits only.
+* Settlement: settle-method filter dropdown; the text filter now matches class
+  and company only.
+* Export version 6 (classes[].credits); version 5 files still import.
 
 = 2.7.0 =
 * Settlement: draft events from billable lines — an Event column with status

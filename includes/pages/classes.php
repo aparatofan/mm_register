@@ -31,6 +31,8 @@ $settle_methods = MMR_Data::class_field_values( 'settle_method' );
 $active_companies = MMR_Data::companies( array( 'status' => 'active' ) );
 $all_companies = MMR_Data::companies( array( 'status' => 'all' ) );
 $company_names = MMR_Data::company_names(); // id => name, all statuses.
+// Prepaid-credit payments for every listed class, in one query.
+$class_credits = MMR_Data::credits_for_classes( wp_list_pluck( $classes, 'id' ) );
 
 // Filters echoed back by row-action forms so archiving keeps the current view.
 $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $type_filter );
@@ -113,6 +115,14 @@ if ( $company_filter ) {
 						'share'      => null === $member->share_per_lesson ? '' : $member->share_per_lesson,
 					);
 				}
+				$credit_json = array();
+				foreach ( isset( $class_credits[ (int) $class->id ] ) ? $class_credits[ (int) $class->id ] : array() as $credit ) {
+					$credit_json[] = array(
+						'date'   => $credit['credit_date'],
+						'amount' => $credit['amount'],
+						'note'   => $credit['note'],
+					);
+				}
 				$json = wp_json_encode( array(
 					'id'            => (int) $class->id,
 					'name'          => $class->name,
@@ -125,6 +135,7 @@ if ( $company_filter ) {
 					'notes'         => $class->notes,
 					'status'        => $class->status,
 					'members'       => $member_json,
+					'credits'       => $credit_json,
 				) );
 				?>
 				<tr class="<?php echo $is_archived ? 'mmr-archived' : ''; ?>">
@@ -221,6 +232,35 @@ if ( $company_filter ) {
 								<option value="active"><?php esc_html_e( 'active', 'mm-register' ); ?></option>
 								<option value="archived"><?php esc_html_e( 'archived', 'mm-register' ); ?></option>
 							</select>
+						</div>
+						<?php
+						// Prepaid credit (2.8): shown only while the settle method maps to
+						// rozliczenie. While hidden, admin.js disables every input in the box —
+						// credits_present included — so the server leaves stored payments untouched.
+						?>
+						<div class="mmr-field mmr-field--full mmr-credit-box" id="mmr-credit-box" hidden
+							data-today="<?php echo esc_attr( current_time( 'Y-m-d' ) ); ?>"
+							data-add-first="<?php esc_attr_e( '+ Add credit', 'mm-register' ); ?>"
+							data-add-more="<?php esc_attr_e( '+ Add top-up', 'mm-register' ); ?>">
+							<h3 class="mmr-credit-box__title"><?php esc_html_e( 'Prepaid credit', 'mm-register' ); ?></h3>
+							<p class="mmr-hint"><?php esc_html_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?></p>
+							<input type="hidden" name="credits_present" value="1">
+							<div class="mmr-credit-row mmr-credit-row--head" aria-hidden="true">
+								<span><?php esc_html_e( 'Date', 'mm-register' ); ?></span>
+								<span><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></span>
+								<span><?php esc_html_e( 'Note', 'mm-register' ); ?></span>
+								<span></span>
+							</div>
+							<div id="mmr-credit-rows"></div>
+							<p><button type="button" class="button" id="mmr-add-credit"><?php esc_html_e( '+ Add credit', 'mm-register' ); ?></button></p>
+							<template id="mmr-credit-row-template">
+								<div class="mmr-credit-row">
+									<input type="date" name="credit_date[]" class="mmr-credit-date" aria-label="<?php esc_attr_e( 'Payment date', 'mm-register' ); ?>">
+									<input type="text" inputmode="decimal" name="credit_amount[]" class="mmr-credit-amount" aria-label="<?php esc_attr_e( 'Payment amount (zł)', 'mm-register' ); ?>">
+									<input type="text" maxlength="190" name="credit_note[]" class="mmr-credit-note" aria-label="<?php esc_attr_e( 'Payment note', 'mm-register' ); ?>">
+									<button type="button" class="button-link mmr-remove-credit" aria-label="<?php esc_attr_e( 'Remove payment', 'mm-register' ); ?>">✕</button>
+								</div>
+							</template>
 						</div>
 						<div class="mmr-field mmr-field--full">
 							<label for="mmr-class-notes"><?php esc_html_e( 'Notes', 'mm-register' ); ?></label>

@@ -327,6 +327,383 @@ class MMR_Data {
 		}
 	}
 
+	/* ---------------------------------------------------------------------
+	 * Prepaid credit (2.8) — rozliczenie classes only.
+	 *
+	 * Payments are the only stored figures. The balance is computed from the
+	 * lessons' fee_snapshot values, never from the current class fee, so a
+	 * later fee change never rewrites what was already drawn down. All money
+	 * arithmetic below is in integer grosze; DECIMAL values are converted on
+	 * read and only turned back into złoty for output.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * DECIMAL string / number → integer grosze.
+	 *
+	 * @param mixed $decimal Value read from a DECIMAL column.
+	 * @return int
+	 */
+	protected static function to_grosze( $decimal ) {
+		return (int) round( (float) $decimal * 100 );
+	}
+
+	/**
+	 * Clean, unique, positive class IDs.
+	 *
+	 * @param array $ids Raw IDs.
+	 * @return int[]
+	 */
+	protected static function clean_ids( $ids ) {
+		return array_values( array_unique( array_filter( array_map( 'absint', (array) $ids ) ) ) );
+	}
+
+	/**
+	 * Payments of several classes, in one query (no N+1 on the Classes page).
+	 *
+	 * @param int[] $class_ids Class IDs.
+	 * @return array class_id => list of [ id, credit_date, amount, note ],
+	 *               ordered by credit_date, then id. `amount` is the DECIMAL string.
+	 */
+	public static function credits_for_classes( array $class_ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $class_ids );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$t = MMR_DB::table( 'class_credits' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, class_id, credit_date, amount, note FROM {$t}
+			 WHERE class_id IN ({$placeholders})
+			 ORDER BY credit_date ASC, id ASC",
+			$ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ (int) $row->class_id ][] = array(
+				'id'          => (int) $row->id,
+				'credit_date' => $row->credit_date,
+				'amount'      => $row->amount,
+				'note'        => (string) $row->note,
+			);
+		}
+		return $map;
+	}
+
+	/**
+	 * Validate one typed payment row — the class form and the importer share
+	 * this, so both accept and reject exactly the same rows.
+	 *
+	 * @param mixed $date   Raw date (Y-m-d).
+	 * @param mixed $amount Raw amount (`3 600,00`, `3600.00`, a number…).
+	 * @param mixed $note   Raw note.
+	 * @return array|WP_Error [ date, amount (float złoty), note ].
+	 */
+	public static function normalize_credit_row( $date, $amount, $note ) {
+		$date = trim( sanitize_text_field( (string) $date ) );
+		if ( ! mmr_valid_date( $date ) ) {
+			return new WP_Error( 'mmr_credit_date', __( 'Each payment needs a date.', 'mm-register' ) );
+		}
+		if ( is_string( $amount ) ) {
+			$amount = trim( sanitize_text_field( $amount ) );
+		}
+		$value = mmr_sanitize_money( $amount );
+		if ( ! mmr_money_is_parseable( $amount ) || self::to_grosze( $value ) <= 0 ) {
+			return new WP_Error( 'mmr_credit_amount', __( 'Payment amounts must be above 0.', 'mm-register' ) );
+		}
+		return array(
+			'date'   => $date,
+			'amount' => $value,
+			'note'   => mb_substr( sanitize_text_field( (string) $note ), 0, 190 ),
+		);
+	}
+
+	/**
+	 * Replace the payment set of a class (delete then insert), like
+	 * set_members(). Rows are already validated by the caller; an empty list
+	 * deletes every payment.
+	 *
+	 * @param int   $class_id Class ID.
+	 * @param array $rows     List of [ date (Y-m-d), amount (float złoty), note ].
+	 */
+	public static function set_class_credits( $class_id, array $rows ) {
+		global $wpdb;
+		$t = MMR_DB::table( 'class_credits' );
+		$wpdb->delete( $t, array( 'class_id' => (int) $class_id ), array( '%d' ) );
+		foreach ( $rows as $row ) {
+			self::insert_credit( $class_id, $row['date'], $row['amount'], isset( $row['note'] ) ? $row['note'] : '' );
+		}
+	}
+
+	/**
+	 * Insert one payment row. No validation — callers validate.
+	 *
+	 * @param int    $class_id Class ID.
+	 * @param string $date     Y-m-d.
+	 * @param float  $amount   Złoty.
+	 * @param string $note     Free text (cut to 190 characters).
+	 * @return int New ID.
+	 */
+	protected static function insert_credit( $class_id, $date, $amount, $note ) {
+		global $wpdb;
+		$note = mb_substr( (string) $note, 0, 190 );
+		$wpdb->insert(
+			MMR_DB::table( 'class_credits' ),
+			array(
+				'class_id'    => (int) $class_id,
+				'credit_date' => $date,
+				// String, so no float ever reaches the DECIMAL column.
+				'amount'      => number_format( (float) $amount, 2, '.', '' ),
+				'note'        => '' === $note ? null : $note,
+				'created_at'  => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '' === $note ? null : '%s', '%s' )
+		);
+		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Add one payment (Settlement top-up form). Re-checks everything itself.
+	 *
+	 * @param int    $class_id Class ID.
+	 * @param string $date     Y-m-d.
+	 * @param float  $amount   Złoty, must be > 0.
+	 * @param string $note     Free text.
+	 * @return int|WP_Error New payment ID.
+	 */
+	public static function add_class_credit( $class_id, $date, $amount, $note ) {
+		$class = self::class_row( (int) $class_id );
+		if ( ! $class ) {
+			return new WP_Error( 'mmr_credit_class', __( 'Unknown class.', 'mm-register' ) );
+		}
+		if ( 'rozliczenie' !== self::event_type_hint( $class->settle_method ) ) {
+			return new WP_Error( 'mmr_credit_method', __( 'Prepaid credit is only for rozliczenie classes.', 'mm-register' ) );
+		}
+		if ( ! mmr_valid_date( $date ) ) {
+			return new WP_Error( 'mmr_credit_date', __( 'Each payment needs a date.', 'mm-register' ) );
+		}
+		if ( self::to_grosze( $amount ) <= 0 ) {
+			return new WP_Error( 'mmr_credit_amount', __( 'Payment amounts must be above 0.', 'mm-register' ) );
+		}
+		$id = self::insert_credit( (int) $class->id, $date, $amount, $note );
+		if ( ! $id ) {
+			return new WP_Error( 'mmr_credit_db', __( 'The payment could not be saved.', 'mm-register' ) );
+		}
+		return $id;
+	}
+
+	/**
+	 * Balance summary per class, for classes with at least one payment
+	 * (classes without payments are absent). Three grouped queries in all.
+	 *
+	 * Used = Σ fee_snapshot of lessons from the earliest payment date up to
+	 * and including today. Lessons after today are "booked ahead": they do
+	 * not reduce `left`, only `projected`.
+	 *
+	 * @param int[] $class_ids Class IDs.
+	 * @return array class_id => [ start, payments, paid, used, left, booked_sum,
+	 *               projected (grosze), taught, booked (counts), fee (grosze),
+	 *               left_lessons (int|null), state (good|warn|danger) ].
+	 */
+	public static function credit_summaries( array $class_ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $class_ids );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$t = MMR_DB::table( 'class_credits' );
+		$l = MMR_DB::table( 'lessons' );
+		$c = MMR_DB::table( 'classes' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$today = current_time( 'Y-m-d' );
+
+		// 1. Payments.
+		$payments = $wpdb->get_results( $wpdb->prepare(
+			"SELECT class_id, MIN(credit_date) AS start, SUM(amount) AS paid, COUNT(*) AS n
+			 FROM {$t}
+			 WHERE class_id IN ({$placeholders})
+			 GROUP BY class_id",
+			$ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		if ( empty( $payments ) ) {
+			return array();
+		}
+
+		// 2. Lessons from each class's start date, split at today.
+		$params = array_merge( array( $today, $today, $today, $today ), $ids );
+		$lessons = $wpdb->get_results( $wpdb->prepare(
+			"SELECT le.class_id,
+			        SUM(CASE WHEN le.lesson_date <= %s THEN le.fee_snapshot ELSE 0 END) AS used,
+			        SUM(CASE WHEN le.lesson_date <= %s THEN 1 ELSE 0 END) AS taught,
+			        SUM(CASE WHEN le.lesson_date > %s THEN le.fee_snapshot ELSE 0 END) AS booked_sum,
+			        SUM(CASE WHEN le.lesson_date > %s THEN 1 ELSE 0 END) AS booked
+			 FROM {$l} le
+			 JOIN (
+			     SELECT class_id, MIN(credit_date) AS start FROM {$t}
+			     WHERE class_id IN ({$placeholders})
+			     GROUP BY class_id
+			 ) cs ON cs.class_id = le.class_id
+			 WHERE le.lesson_date >= cs.start
+			 GROUP BY le.class_id",
+			$params
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$lesson_map = array();
+		foreach ( $lessons as $row ) {
+			$lesson_map[ (int) $row->class_id ] = $row;
+		}
+
+		// 3. Current fees (only for the "lessons left" estimate).
+		$fees = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, fee FROM {$c} WHERE id IN ({$placeholders})",
+			$ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$fee_map = array();
+		foreach ( $fees as $row ) {
+			$fee_map[ (int) $row->id ] = self::to_grosze( $row->fee );
+		}
+
+		$out = array();
+		foreach ( $payments as $p ) {
+			$cid = (int) $p->class_id;
+			$lr = isset( $lesson_map[ $cid ] ) ? $lesson_map[ $cid ] : null;
+			$paid = self::to_grosze( $p->paid );
+			$used = $lr ? self::to_grosze( $lr->used ) : 0;
+			$booked_sum = $lr ? self::to_grosze( $lr->booked_sum ) : 0;
+			$left = $paid - $used;
+			$fee = isset( $fee_map[ $cid ] ) ? $fee_map[ $cid ] : 0;
+			$left_lessons = $fee > 0 ? (int) floor( $left / $fee ) : null;
+
+			if ( $left < 0 ) {
+				$state = 'danger';
+			} elseif ( null !== $left_lessons && $left_lessons <= 2 ) {
+				$state = 'warn';
+			} else {
+				$state = 'good';
+			}
+
+			$out[ $cid ] = array(
+				'start'        => $p->start,
+				'payments'     => (int) $p->n,
+				'paid'         => $paid,
+				'used'         => $used,
+				'left'         => $left,
+				'booked_sum'   => $booked_sum,
+				'projected'    => $left - $booked_sum,
+				'taught'       => $lr ? (int) $lr->taught : 0,
+				'booked'       => $lr ? (int) $lr->booked : 0,
+				'fee'          => $fee,
+				'left_lessons' => $left_lessons,
+				'state'        => $state,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * Ledger of one class: payments plus lessons from the start date, in date
+	 * order. On the same date payments come first; lessons follow by slot.
+	 *
+	 * @param int $class_id Class ID.
+	 * @return array List of [ date, kind (payment|lesson|booked), label, note,
+	 *               amount (signed grosze), balance (running grosze),
+	 *               lesson_no (int|null) ]. Empty when there are no payments.
+	 */
+	public static function credit_ledger( $class_id ) {
+		global $wpdb;
+		$class_id = (int) $class_id;
+		$credits = self::credits_for_classes( array( $class_id ) );
+		if ( empty( $credits[ $class_id ] ) ) {
+			return array();
+		}
+		$credits = $credits[ $class_id ];
+		$start = $credits[0]['credit_date']; // Ordered by date ASC.
+		$today = current_time( 'Y-m-d' );
+
+		$l = MMR_DB::table( 'lessons' );
+		$lessons = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, lesson_date, slot, fee_snapshot FROM {$l}
+			 WHERE class_id = %d AND lesson_date >= %s
+			 ORDER BY lesson_date ASC, slot ASC, id ASC",
+			$class_id,
+			$start
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		// Merge two already-sorted lists; a payment wins a date tie.
+		$items = array();
+		$pi = 0;
+		$li = 0;
+		$pn = count( $credits );
+		$ln = count( $lessons );
+		$balance = 0;
+		$lesson_no = 0;
+		while ( $pi < $pn || $li < $ln ) {
+			$take_payment = $pi < $pn && ( $li >= $ln || $credits[ $pi ]['credit_date'] <= $lessons[ $li ]->lesson_date );
+			if ( $take_payment ) {
+				$p = $credits[ $pi ];
+				$amount = self::to_grosze( $p['amount'] );
+				$balance += $amount;
+				$items[] = array(
+					'date'      => $p['credit_date'],
+					'kind'      => 'payment',
+					'label'     => 0 === $pi ? __( 'Credit', 'mm-register' ) : __( 'Top-up', 'mm-register' ),
+					'note'      => $p['note'],
+					'amount'    => $amount,
+					'balance'   => $balance,
+					'lesson_no' => null,
+				);
+				$pi++;
+				continue;
+			}
+			$le = $lessons[ $li ];
+			$amount = -self::to_grosze( $le->fee_snapshot );
+			$balance += $amount;
+			$lesson_no++;
+			$booked = $le->lesson_date > $today;
+			$items[] = array(
+				'date'      => $le->lesson_date,
+				'kind'      => $booked ? 'booked' : 'lesson',
+				/* translators: %d: lesson number since the credit started. */
+				'label'     => $booked ? __( 'Lesson (booked)', 'mm-register' ) : sprintf( __( 'Lesson #%d', 'mm-register' ), $lesson_no ),
+				'note'      => '',
+				'amount'    => $amount,
+				'balance'   => $balance,
+				'lesson_no' => $lesson_no,
+			);
+			$li++;
+		}
+		return $items;
+	}
+
+	/**
+	 * The one place that composes the balance chip text, so the Settlement
+	 * row and the credit panel always agree.
+	 *
+	 * @param array $summary One credit_summaries() entry.
+	 * @return string
+	 */
+	public static function credit_chip( array $summary ) {
+		$left = (int) $summary['left'];
+		if ( $left < 0 ) {
+			/* translators: %s: overdrawn amount, e.g. "150,00 zł". */
+			return sprintf( __( 'Overdrawn −%s', 'mm-register' ), mmr_money( abs( $left ) / 100 ) );
+		}
+		$n = $summary['left_lessons'];
+		if ( null === $n ) {
+			return mmr_money( $left / 100 );
+		}
+		if ( 0 === $n ) {
+			return __( 'Used up', 'mm-register' );
+		}
+		/* translators: %d: number of lessons the balance still covers. */
+		$lessons = sprintf( _n( '%d lesson left', '%d lessons left', $n, 'mm-register' ), $n );
+		if ( 'warn' === $summary['state'] ) {
+			/* translators: %s: e.g. "2 lessons left". */
+			return sprintf( __( 'Running low · %s', 'mm-register' ), $lessons );
+		}
+		/* translators: 1: money left, 2: e.g. "14 lessons left". */
+		return sprintf( __( '%1$s · %2$s', 'mm-register' ), mmr_money( $left / 100 ), $lessons );
+	}
+
 	/**
 	 * Class names each student belongs to.
 	 *

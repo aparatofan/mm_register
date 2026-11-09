@@ -408,6 +408,133 @@
 	}
 
 	/* ---------------------------------------------------------------
+	 * Class modal — prepaid credit repeater (2.8). Shown only while the
+	 * settle method maps to rozliczenie. While hidden, every input in the
+	 * box (credits_present included) is disabled, so nothing posts and the
+	 * server leaves the stored payments untouched.
+	 * ------------------------------------------------------------- */
+
+	/* Display-only mirror of MMR_Data::event_type_hint() in
+	   includes/class-mmr-data.php — that PHP function is the authority and
+	   the server decides. Same order: invoice → revolut → cash/gotówka →
+	   rozlicz, so "rozliczenie / cash" maps to cash here as it does there. */
+	function settleTypeHint( method ) {
+		var m = String( method || '' ).trim().toLowerCase();
+		if ( '' === m ) { return ''; }
+		if ( -1 !== m.indexOf( 'invoice' ) ) { return 'invoice'; }
+		if ( -1 !== m.indexOf( 'revolut' ) ) { return 'revolut'; }
+		if ( -1 !== m.indexOf( 'cash' ) || -1 !== m.indexOf( 'gotówka' ) ) { return 'cash'; }
+		if ( /rozlicz/i.test( m ) ) { return 'rozliczenie'; }
+		return '';
+	}
+
+	function creditRowsBox( box ) {
+		return box ? box.querySelector( '#mmr-credit-rows' ) : null;
+	}
+
+	function updateCreditButton( box ) {
+		var btn = box.querySelector( '#mmr-add-credit' );
+		var rows = creditRowsBox( box );
+		if ( ! btn || ! rows ) { return; }
+		btn.textContent = rows.querySelector( '.mmr-credit-row' )
+			? box.getAttribute( 'data-add-more' )
+			: box.getAttribute( 'data-add-first' );
+	}
+
+	function clearCredits( box ) {
+		var rows = creditRowsBox( box );
+		if ( rows ) { rows.innerHTML = ''; }
+		updateCreditButton( box );
+	}
+
+	function addCreditRow( box, credit ) {
+		var tpl = box.querySelector( '#mmr-credit-row-template' );
+		var rows = creditRowsBox( box );
+		if ( ! tpl || ! rows ) { return; }
+		var frag = tpl.content.cloneNode( true );
+		var date = frag.querySelector( '.mmr-credit-date' );
+		var amount = frag.querySelector( '.mmr-credit-amount' );
+		var note = frag.querySelector( '.mmr-credit-note' );
+		if ( credit ) {
+			if ( date ) { date.value = credit.date || ''; }
+			if ( amount ) { amount.value = ( null === credit.amount || undefined === credit.amount ) ? '' : credit.amount; }
+			if ( note ) { note.value = credit.note || ''; }
+		} else if ( date ) {
+			date.value = box.getAttribute( 'data-today' ) || '';
+		}
+		/* A row added while the box is hidden must not post either. */
+		if ( box.hidden ) {
+			frag.querySelectorAll( 'input' ).forEach( function ( input ) { input.disabled = true; } );
+		}
+		rows.appendChild( frag );
+		updateCreditButton( box );
+		if ( ! credit && amount && ! box.hidden ) { amount.focus(); }
+	}
+
+	function populateCredits( box, credits ) {
+		clearCredits( box );
+		( credits || [] ).forEach( function ( c ) {
+			addCreditRow( box, c );
+		} );
+	}
+
+	function setCreditBoxVisible( box, show ) {
+		box.hidden = ! show;
+		box.querySelectorAll( 'input' ).forEach( function ( input ) {
+			input.disabled = ! show;
+		} );
+		/* Shown with nothing entered yet: offer one row dated today. */
+		if ( show ) {
+			var rows = creditRowsBox( box );
+			if ( rows && ! rows.querySelector( '.mmr-credit-row' ) ) {
+				var tpl = box.querySelector( '#mmr-credit-row-template' );
+				if ( tpl ) {
+					rows.appendChild( tpl.content.cloneNode( true ) );
+					var date = rows.querySelector( '.mmr-credit-date' );
+					if ( date ) { date.value = box.getAttribute( 'data-today' ) || ''; }
+					updateCreditButton( box );
+				}
+			}
+		}
+	}
+
+	function initCreditRepeater() {
+		var box = document.getElementById( 'mmr-credit-box' );
+		var settleInput = document.getElementById( 'mmr-class-settle' );
+		if ( ! box || ! settleInput ) { return; }
+		var form = box.closest( 'form' );
+
+		function sync() {
+			setCreditBoxVisible( box, 'rozliczenie' === settleTypeHint( settleInput.value ) );
+		}
+
+		if ( form ) {
+			form.addEventListener( 'mmr:fill', function ( e ) {
+				var detail = e.detail || {};
+				box.hidden = true; // populate first, so new rows start disabled until sync().
+				populateCredits( box, detail.credits || [] );
+				sync();
+			} );
+		}
+		settleInput.addEventListener( 'input', sync );
+
+		box.addEventListener( 'click', function ( e ) {
+			if ( e.target.id === 'mmr-add-credit' ) {
+				e.preventDefault();
+				addCreditRow( box, null );
+			}
+			if ( e.target.classList && e.target.classList.contains( 'mmr-remove-credit' ) ) {
+				e.preventDefault();
+				var row = e.target.closest( '.mmr-credit-row' );
+				if ( row ) { row.remove(); }
+				updateCreditButton( box );
+			}
+		} );
+
+		sync();
+	}
+
+	/* ---------------------------------------------------------------
 	 * Forms that need a confirm() before submitting (e.g. archiving a
 	 * company still linked to classes).
 	 * ------------------------------------------------------------- */
@@ -981,6 +1108,7 @@
 		var input = document.getElementById( 'mmr-class-filter' );
 		if ( ! table || ! input ) { return; }
 
+		var methodSelect = document.getElementById( 'mmr-method-filter' );
 		var clearBtn = document.getElementById( 'mmr-class-filter-clear' );
 		var countOut = document.getElementById( 'mmr-class-filter-count' );
 		var footTotal = document.getElementById( 'mmr-class-foot-total' );
@@ -995,50 +1123,64 @@
 			if ( ! tbody ) { return; }
 
 			var query = input.value.trim().toLowerCase();
+			/* The settle method is the dropdown's job; the text box only
+			   matches class and company. */
+			var method = methodSelect ? methodSelect.value.trim().toLowerCase() : '';
+			var active = '' !== query || '' !== method;
+			/* Credit-only rows (rozliczenie classes with no lesson this month)
+			   exist only for the rozliczenie filter. */
+			var showCreditOnly = /rozlicz/i.test( method );
 			var groups = settlementGroups( tbody );
 			var visible = 0;
+			var counted = 0;
 			var total = 0;
 
 			groups.forEach( function ( group ) {
 				var row = group.row;
+				var creditOnly = row.classList.contains( 'mmr-credit-only' );
 				var haystack = [
 					row.dataset.sortClass || '',
-					row.dataset.sortCompany || '',
-					row.dataset.sortMethod || ''
+					row.dataset.sortCompany || ''
 				].join( ' ' ).toLowerCase();
-				var match = '' === query || -1 !== haystack.indexOf( query );
+				var match = ( '' === query || -1 !== haystack.indexOf( query ) )
+					&& ( '' === method || ( row.dataset.sortMethod || '' ).trim().toLowerCase() === method );
+				if ( creditOnly && ! showCreditOnly ) { match = false; }
 
 				group.nodes.forEach( function ( node ) {
 					node.classList.toggle( 'mmr-filtered-out', ! match );
 				} );
 
+				if ( ! creditOnly || showCreditOnly ) { counted++; }
 				if ( match ) {
 					visible++;
 					total += parseFloat( row.dataset.classTotal ) || 0;
 				}
 			} );
 
-			if ( clearBtn ) { clearBtn.hidden = '' === query; }
+			if ( methodSelect ) { methodSelect.classList.toggle( 'is-set', '' !== method ); }
+			if ( clearBtn ) { clearBtn.hidden = ! active; }
 			if ( countOut ) {
-				countOut.textContent = '' === query
+				countOut.textContent = ! active
 					? ''
 					: ( i18n.classesShown || 'Showing %1$s of %2$s classes' )
 						.replace( '%1$s', visible )
-						.replace( '%2$s', groups.length );
+						.replace( '%2$s', counted );
 			}
 			/* Only the table's own footer follows the filter. The Month total
 			   and To bill chips stay full-month so the headline figures are
 			   never a filtered half-truth. */
 			if ( footTotal ) {
-				footTotal.textContent = '' === query ? fullTotal : formatMoney( total );
+				footTotal.textContent = ! active ? fullTotal : formatMoney( total );
 			}
 			if ( footLabel ) {
-				footLabel.textContent = '' === query ? fullLabel : ( i18n.filteredTotal || 'Filtered total' );
+				footLabel.textContent = ! active ? fullLabel : ( i18n.filteredTotal || 'Filtered total' );
 			}
 		}
 
 		input.addEventListener( 'input', applyFilter );
+		if ( methodSelect ) { methodSelect.addEventListener( 'change', applyFilter ); }
 		if ( clearBtn ) {
+			/* Clears the text only; the method dropdown keeps its value. */
 			clearBtn.addEventListener( 'click', function () {
 				input.value = '';
 				applyFilter();
@@ -1648,6 +1790,7 @@
 		initModals();
 		initMembersRepeater();
 		initCompanyField();
+		initCreditRepeater();
 		initConfirmForms();
 		initCalendar();
 		initSettlement();

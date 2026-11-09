@@ -172,6 +172,8 @@
 /* Filtered-out rows use a class rather than [hidden], so the split-row
    toggle keeps sole ownership of `hidden` and open/closed state survives. */
 .mmr-settlement-table tr.mmr-filtered-out { display: none; }
+/* Settle-method filter (2.8): the existing selected-blue while it has a value. */
+.mmr-settle-filterbar select.is-set { background-color: #EDF4FF; border-color: #0856C9; color: #0856C9; }
 
 /* Events (receivables register) ---------------------------------------- */
 
@@ -781,9 +783,25 @@
 .mmr-member-picker { position: relative; min-width: 0; }
 .mmr-member-picker .mmr-member-search { width: 100%; max-width: 100%; box-sizing: border-box; margin: 0; }
 
+/* Prepaid credit repeater (2.8) — same pattern as the members repeater. */
+.mmr-credit-box[hidden] { display: none; }
+.mmr-credit-box .mmr-credit-box__title { margin: 4px 0 0; font-size: 14px; }
+.mmr-credit-box .mmr-hint { margin: 0; }
+.mmr-credit-row { display: grid; grid-template-columns: 150px 120px minmax(0, 1fr) 32px; gap: 12px; align-items: center; margin-bottom: 8px; }
+.mmr-credit-row > input {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	margin: 0;
+}
+.mmr-credit-row--head { font-size: 12px; font-weight: 600; color: var(--mmr-muted); margin-bottom: 4px; }
+
 @media (max-width: 640px) {
 	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }
 	.mmr-member-row { grid-template-columns: minmax(0, 1fr); }
+	.mmr-credit-row { grid-template-columns: minmax(0, 1fr); }
+	.mmr-credit-row--head { display: none; }
 }
 
 /* Row actions (Edit + Archive/Restore) */
@@ -868,6 +886,35 @@
 .mmr-settlement .mmr-event-panel__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 .mmr-pay-per-member .mmr-hint { display: block; }
+
+/* Settlement — prepaid credit (2.8) ------------------------------------ */
+.mmr-settlement .mmr-status-chip--good { background: #ECFDF3; color: #16803C; border-color: #ABEFC6; }
+.mmr-settlement .mmr-status-chip--danger { background: #FFF1F1; color: #C62828; border-color: #F5B5B5; }
+/* Sits on its own line under the method text in the Settle method cell. */
+.mmr-settlement .mmr-credit-chip { display: table; margin-top: 4px; }
+.mmr-settlement .mmr-credit-neg { color: #C62828; }
+
+.mmr-settlement .mmr-credit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 12px 0; }
+.mmr-settlement .mmr-credit-fact { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: var(--mmr-bg-soft); border: 1px solid var(--mmr-border); border-radius: 6px; }
+.mmr-settlement .mmr-credit-fact__label { font-size: 12px; color: var(--mmr-muted); }
+.mmr-settlement .mmr-credit-fact__value { font-size: 16px; font-variant-numeric: tabular-nums; }
+.mmr-settlement .mmr-credit-fact__sub { font-size: 12px; color: var(--mmr-muted); }
+
+.mmr-settlement .mmr-credit-ledger-scroll { max-height: 360px; overflow-y: auto; border: 1px solid var(--mmr-border); border-radius: 6px; }
+.mmr-settlement .mmr-credit-ledger { margin: 0; background: #fff; }
+.mmr-settlement .mmr-credit-ledger thead th { position: sticky; top: 0; z-index: 1; background: var(--mmr-bg-soft); }
+.mmr-settlement .mmr-credit-ledger .mmr-num { text-align: right; font-variant-numeric: tabular-nums; }
+.mmr-settlement .mmr-credit-ledger tr.mmr-credit-ledger__payment td { background: #ECFDF3; }
+.mmr-settlement .mmr-credit-ledger tr.mmr-credit-ledger__booked td { color: var(--mmr-muted); font-style: italic; }
+.mmr-settlement .mmr-credit-ledger tr.mmr-credit-ledger__booked td.mmr-credit-neg { color: #C62828; }
+/* Today: a 2px brand-blue rule between taught and booked lessons. */
+.mmr-settlement .mmr-credit-ledger tr.mmr-credit-ledger__today td { padding: 0; height: 0; border-bottom: 0; border-top: 2px solid #0856C9; }
+
+.mmr-settlement .mmr-credit-topup { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 12px; }
+.mmr-settlement .mmr-credit-topup label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; font-weight: 600; }
+.mmr-settlement .mmr-credit-topup__note { flex: 1 1 200px; }
+.mmr-settlement .mmr-credit-topup__note input { width: 100%; box-sizing: border-box; }
+.mmr-settlement .mmr-credit-panel__close { margin-left: auto; }
 
 /* Tools --------------------------------------------------------------- */
 .mmr-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
