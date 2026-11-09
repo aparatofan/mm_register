@@ -129,6 +129,7 @@ class MMR_Admin {
 			'settle_create_event'   => 'post_settle_create_event',
 			'settle_create_remaining' => 'post_settle_create_remaining',
 			'settle_event_action'   => 'post_settle_event_action',
+			'settle_add_credit'     => 'post_settle_add_credit',
 			'import_data'           => 'post_import_data',
 			'export_data'           => 'post_export_data',
 			'wipe_data'             => 'post_wipe_data',
@@ -286,6 +287,15 @@ class MMR_Admin {
 		if ( '' === $data['name'] ) {
 			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
+
+		// Prepaid credit rows are parsed before anything is saved, so a bad
+		// row saves nothing. null = leave the stored payments untouched (box
+		// hidden / not a rozliczenie class / a form without the box).
+		$credits = null;
+		if ( ! empty( $_POST['credits_present'] ) && 'rozliczenie' === MMR_Data::event_type_hint( $data['settle_method'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			$credits = $this->parse_credit_rows();
+		}
+
 		$class_id = MMR_Data::save_class( $data, $id );
 
 		// Members repeater.
@@ -304,7 +314,44 @@ class MMR_Admin {
 			);
 		}
 		MMR_Data::set_members( $class_id, $members );
+
+		// An empty list deletes every payment — that is what removing every row means.
+		if ( null !== $credits ) {
+			MMR_Data::set_class_credits( $class_id, $credits );
+		}
 		$this->redirect( 'classes', 'saved' );
+	}
+
+	/**
+	 * Parse the class form's prepaid-credit rows, or redirect with an error.
+	 *
+	 * A row with neither an amount nor a date is skipped. A row with a date
+	 * but no amount is skipped too: the box offers one row dated today, and
+	 * leaving it empty must not block saving the class.
+	 *
+	 * @return array List of [ date, amount (float), note ].
+	 */
+	protected function parse_credit_rows() {
+		$dates   = isset( $_POST['credit_date'] ) ? (array) wp_unslash( $_POST['credit_date'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$amounts = isset( $_POST['credit_amount'] ) ? (array) wp_unslash( $_POST['credit_amount'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$notes   = isset( $_POST['credit_note'] ) ? (array) wp_unslash( $_POST['credit_note'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+
+		$rows = array();
+		foreach ( $amounts as $i => $amount_raw ) {
+			if ( '' === trim( (string) $amount_raw ) ) {
+				continue;
+			}
+			$row = MMR_Data::normalize_credit_row(
+				isset( $dates[ $i ] ) ? $dates[ $i ] : '',
+				(string) $amount_raw,
+				isset( $notes[ $i ] ) ? $notes[ $i ] : ''
+			);
+			if ( is_wp_error( $row ) ) {
+				$this->redirect( 'classes', $row->get_error_message(), array(), true );
+			}
+			$rows[] = $row;
+		}
+		return $rows;
 	}
 
 	/** Archive / restore a class. */
@@ -518,6 +565,35 @@ class MMR_Admin {
 			$parts[] = sprintf( __( 'Skipped %1$d: %2$s — %3$s', 'mm-register' ), count( $names ), implode( ', ', $names ), $reason );
 		}
 		$this->redirect( 'settlement', implode( ' ', $parts ), array( 'period' => $period ), 0 === $created && ! empty( $skipped ) );
+	}
+
+	/**
+	 * Add one prepaid-credit payment from the Settlement credit panel.
+	 * Capability and nonce are checked by handle_post().
+	 */
+	protected function post_settle_add_credit() {
+		$period = $this->settle_period();
+		$class_id = isset( $_POST['class_id'] ) ? absint( $_POST['class_id'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification
+		$back = array( 'period' => $period, 'credit' => $class_id );
+
+		$row = MMR_Data::normalize_credit_row( $this->text( 'credit_date' ), $this->text( 'amount' ), $this->text( 'note' ) );
+		if ( is_wp_error( $row ) ) {
+			$this->redirect( 'settlement', $row->get_error_message(), $back, true );
+		}
+		$amount = $row['amount'];
+
+		$first = ! MMR_Data::credits_for_classes( array( $class_id ) );
+		$result = MMR_Data::add_class_credit( $class_id, $row['date'], $amount, $row['note'] );
+		if ( is_wp_error( $result ) ) {
+			$this->redirect( 'settlement', $result->get_error_message(), $back, true );
+		}
+		$message = $first
+			/* translators: %s: amount, e.g. "3 600,00 zł". */
+			? sprintf( __( 'Credit of %s added.', 'mm-register' ), mmr_money( $amount ) )
+			/* translators: %s: amount, e.g. "500,00 zł". */
+			: sprintf( __( 'Top-up of %s added.', 'mm-register' ), mmr_money( $amount ) );
+		wp_safe_redirect( mmr_page_url( 'settlement', array_merge( $back, array( 'mmr_notice' => $message ) ) ) . '#mmr-credit-panel' );
+		exit;
 	}
 
 	/** Act on one event from the Settlement page's event panel. */

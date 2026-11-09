@@ -33,6 +33,19 @@ build step.**
   typed in Events, Revolut request sent, cash received, rozliczenie confirmed).
   Once issued an amount never changes; if the settlement moves the row warns
   instead. The figures themselves are unchanged — lines read the report.
+  **Prepaid credit (2.8).** A class whose settle method maps to
+  *rozliczenie* has a list of payments (date, amount, note) on the class form:
+  the first is the credit, later ones are top-ups. The balance is computed,
+  never stored: *Left now* = Σ payments − Σ `fee_snapshot` of the class's
+  lessons from the earliest payment date up to and including today. Lessons
+  booked after today only move *After booked*. *Lessons left* =
+  ⌊Left now ÷ current class fee⌋ (omitted when the fee is 0). The chip under
+  the settle method is **red** when overdrawn, **amber** at ≤ 2 lessons left
+  (*Used up* at 0) and **green** otherwise; it opens a panel with the facts,
+  a ledger and a top-up form. Credit is per class, counts lesson fees only
+  (no TBT surcharge), and changes no settlement total, billable line or event.
+  A settle-method dropdown filters the table; on *rozliczenie* it also lists
+  active rozliczenie classes with no lesson that month.
 - **Events** — the receivables register: every document issued (invoice /
   revolut / cash / rozliczenie) with KSEF · SENT · PAID ticks you flip inline, a payment date
   and a year-scoped **Outstanding** total. A document starts with **Who** — one
@@ -64,13 +77,14 @@ Invoices themselves are still issued in KSeF; Events only records them.
 - Slug `mm-register`, main file `mm-register.php`, everything prefixed `mmr_`.
 - WordPress 6.x, PHP 8.1+. Custom `dbDelta` tables: `mmr_students`,
   `mmr_classes`, `mmr_class_members`, `mmr_lessons`, `mmr_companies`,
-  `mmr_events`, `mmr_event_classes`.
+  `mmr_events`, `mmr_event_classes`, `mmr_class_credits`.
 - DB version tracked in the `mmr_db_version` option; upgrades run
   automatically on plugin load and are idempotent. The v2.1 upgrade backs up
   `mmr_classes` before dropping its `venue` and `sort_name` columns; v2.2 only
   adds `mmr_events` via `dbDelta` and touches nothing existing, and v2.3 only
   adds `mmr_event_classes` and the `mmr_events.who_text` column — existing
-  events keep their payer label and are never migrated.
+  events keep their payer label and are never migrated. v2.5 only adds
+  `mmr_class_credits` (prepaid-credit payments); nothing existing changes.
 - All pages gated by `manage_options`; all writes via nonces + capability
   checks; all SQL via `$wpdb->prepare`; all output escaped.
 - Assets are enqueued **only** on the plugin's own admin screens (avoids the

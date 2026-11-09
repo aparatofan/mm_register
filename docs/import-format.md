@@ -15,7 +15,7 @@ The importer is:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "companies": [],
   "students": [],
   "classes": [],
@@ -36,6 +36,10 @@ no `events` key, still imports exactly as before.
 `events[].is_draft` / `events[].lines_total`, plus the `rozliczenie` event
 type. A version 4 file imports unchanged: the missing fields default to
 `pay_per_member = 0`, `is_draft = 0` and `lines_total = null`.
+
+**Version 6** (plugin 2.8.0) adds `classes[].credits`, the prepaid-credit
+payments of a rozliczenie class. A version 5 (or older) file has no `credits`
+key and imports unchanged: no payments are created.
 
 ## References (`ref`)
 
@@ -105,6 +109,7 @@ its class via `class_ref` or `class_name`). Unknown references produce a
 | `notes` | string | optional |
 | `status` | `"active"` \| `"archived"` | optional |
 | `members` | array | see below |
+| `credits` | array | optional (v6). Prepaid-credit payments, see below; `[]` when the class has none |
 
 Each `members` entry:
 
@@ -114,6 +119,28 @@ Each `members` entry:
 | `share_per_lesson` | number \| null | member's per-lesson share; `null`/omitted = equal split of `fee` |
 
 A 1-on-1 class has exactly one member with `share_per_lesson: null`.
+
+Each `credits` entry (a payment into a rozliczenie class's prepaid credit — the
+earliest one is the credit and starts the countdown, later ones are top-ups):
+
+| field | type | notes |
+|---|---|---|
+| `date` | string | **required**, `YYYY-MM-DD` |
+| `amount` | number \| string | **required**, above 0 (`3600`, `"3600.00"`, `"3 600,00"`) |
+| `note` | string | optional, cut to 190 characters |
+
+Entries are validated exactly like the class form's *Prepaid credit* rows; an
+invalid entry (bad date, amount 0 or unparseable) is skipped silently.
+Payments are imported whatever the class's `settle_method`: a class switched
+away from rozliczenie keeps its payments hidden, so they round-trip. The
+balance is never imported — it is computed from the lessons' `fee_snapshot`.
+
+```json
+"credits": [
+  { "date": "2026-03-02", "amount": 3600, "note": "zapłaciła z góry" },
+  { "date": "2026-09-14", "amount": 1800, "note": "" }
+]
+```
 
 ```json
 {

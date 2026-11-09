@@ -184,6 +184,7 @@ class MMR_DB {
 		$companies = self::table( 'companies' );
 		$events = self::table( 'events' );
 		$event_classes = self::table( 'event_classes' );
+		$class_credits = self::table( 'class_credits' );
 
 		$sql = array();
 
@@ -314,6 +315,23 @@ class MMR_DB {
 			KEY class_id (class_id)
 		) {$charset_collate};";
 
+		// Prepaid credit (v2.5): payments into a rozliczenie class's prepaid
+		// credit — the first payment is the credit, later ones are top-ups.
+		// The earliest `credit_date` starts the countdown: lessons on or after
+		// it draw the balance down. The balance itself is computed from the
+		// lessons' fee snapshots and is never stored here.
+		$sql[] = "CREATE TABLE {$class_credits} (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			class_id BIGINT UNSIGNED NOT NULL,
+			credit_date DATE NOT NULL,
+			amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+			note VARCHAR(190) NULL DEFAULT NULL,
+			created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			KEY class_id (class_id),
+			KEY class_date (class_id, credit_date)
+		) {$charset_collate};";
+
 		foreach ( $sql as $statement ) {
 			dbDelta( $statement );
 		}
@@ -335,6 +353,7 @@ class MMR_DB {
 			'companies',
 			'events',
 			'event_classes',
+			'class_credits',
 		);
 	}
 

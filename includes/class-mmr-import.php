@@ -70,9 +70,14 @@ class MMR_Import {
 		}
 
 		$membership_count = 0;
+		$credit_count = 0;
 		foreach ( $classes as $class ) {
 			if ( ! empty( $class['members'] ) && is_array( $class['members'] ) ) {
 				$membership_count += count( $class['members'] );
+			}
+			// Absent before v6 exports — nothing to import then.
+			if ( isset( $class['credits'] ) && is_array( $class['credits'] ) ) {
+				$credit_count += count( $class['credits'] );
 			}
 		}
 
@@ -81,6 +86,7 @@ class MMR_Import {
 			'students'    => count( $students ),
 			'classes'     => count( $classes ),
 			'memberships' => $membership_count,
+			'credits'     => $credit_count,
 			'lessons'     => count( $lessons ),
 			'events'      => count( $events ),
 		);
@@ -261,6 +267,30 @@ class MMR_Import {
 				}
 				MMR_Data::set_members( $id, $members );
 			}
+
+			// Prepaid-credit payments (v6). Validated exactly like the class
+			// form; an invalid entry is skipped. Kept whatever the settle
+			// method — payments of a class switched away from rozliczenie
+			// are hidden, not deleted, so they round-trip too.
+			if ( isset( $class['credits'] ) && is_array( $class['credits'] ) ) {
+				$credits = array();
+				foreach ( $class['credits'] as $credit ) {
+					if ( ! is_array( $credit ) ) {
+						continue;
+					}
+					$row = MMR_Data::normalize_credit_row(
+						isset( $credit['date'] ) ? $credit['date'] : '',
+						isset( $credit['amount'] ) ? $credit['amount'] : '',
+						isset( $credit['note'] ) ? $credit['note'] : ''
+					);
+					if ( is_wp_error( $row ) ) {
+						continue;
+					}
+					$credits[] = $row;
+					$imported['credits']++;
+				}
+				MMR_Data::set_class_credits( $id, $credits );
+			}
 		}
 
 		// Lessons.
@@ -327,7 +357,7 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 5,
+			'version'        => 6,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
 			'companies'      => array(),
@@ -369,7 +399,9 @@ class MMR_Import {
 		}
 
 		$class_ref = array();
-		foreach ( MMR_Data::classes( array( 'status' => 'all' ) ) as $c ) {
+		$all_classes = MMR_Data::classes( array( 'status' => 'all' ) );
+		$all_credits = MMR_Data::credits_for_classes( wp_list_pluck( $all_classes, 'id' ) );
+		foreach ( $all_classes as $c ) {
 			$ref = 'c' . $c->id;
 			$class_ref[ (int) $c->id ] = $ref;
 			$members = array();
@@ -377,6 +409,14 @@ class MMR_Import {
 				$members[] = array(
 					'student_ref'      => isset( $student_ref[ (int) $m->student_id ] ) ? $student_ref[ (int) $m->student_id ] : null,
 					'share_per_lesson' => null === $m->share_per_lesson ? null : (float) $m->share_per_lesson,
+				);
+			}
+			$credits = array();
+			foreach ( isset( $all_credits[ (int) $c->id ] ) ? $all_credits[ (int) $c->id ] : array() as $credit ) {
+				$credits[] = array(
+					'date'   => $credit['credit_date'],
+					'amount' => (float) $credit['amount'],
+					'note'   => $credit['note'],
 				);
 			}
 			$out['classes'][] = array(
@@ -390,6 +430,7 @@ class MMR_Import {
 				'notes'         => $c->notes,
 				'status'        => $c->status,
 				'members'       => $members,
+				'credits'       => $credits,
 			);
 		}
 

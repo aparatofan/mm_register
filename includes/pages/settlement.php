@@ -131,6 +131,71 @@ $type_labels = array(
 	'rozliczenie' => __( 'Rozliczenie', 'mm-register' ),
 );
 
+/*
+ * Prepaid credit (2.8). Rozliczenie classes get a balance chip inside the
+ * Settle method cell; active rozliczenie classes with no lesson this month
+ * get a credit-only row that only the method filter reveals. None of this
+ * feeds a total, a billable line or an event — those come from $report alone.
+ * Whether a class is a credit class is decided by event_type_hint() only.
+ */
+$is_credit_method = function ( $method ) {
+	return 'rozliczenie' === MMR_Data::event_type_hint( $method );
+};
+$credit_ids = array();
+$credit_only = array();
+if ( ! empty( $report['classes'] ) ) {
+	$in_report = array();
+	foreach ( $report['classes'] as $row ) {
+		$in_report[ (int) $row['class_id'] ] = true;
+		if ( $is_credit_method( $row['settle_method'] ) ) {
+			$credit_ids[] = (int) $row['class_id'];
+		}
+	}
+	foreach ( MMR_Data::classes( array( 'status' => 'active' ) ) as $c ) {
+		if ( ! isset( $in_report[ (int) $c->id ] ) && $is_credit_method( $c->settle_method ) ) {
+			$credit_only[] = $c;
+			$credit_ids[] = (int) $c->id;
+		}
+	}
+}
+
+// Credit panel: ?credit=<class_id>, only for a class that maps to rozliczenie.
+$credit_panel = null;
+$credit_panel_id = isset( $_GET['credit'] ) ? absint( $_GET['credit'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification
+if ( $credit_panel_id ) {
+	$credit_panel_class = MMR_Data::class_row( $credit_panel_id );
+	if ( $credit_panel_class && $is_credit_method( $credit_panel_class->settle_method ) ) {
+		$credit_panel = $credit_panel_class;
+		$credit_ids[] = $credit_panel_id;
+	}
+}
+
+$credit_summaries = MMR_Data::credit_summaries( $credit_ids );
+
+/** The balance chip of one credit class — the same text the panel shows. */
+$render_credit_chip = function ( $class_id ) use ( $credit_summaries, $period ) {
+	$class_id = (int) $class_id;
+	$url = mmr_page_url( 'settlement', array( 'period' => $period, 'credit' => $class_id ) ) . '#mmr-credit-panel';
+	if ( isset( $credit_summaries[ $class_id ] ) ) {
+		$summary = $credit_summaries[ $class_id ];
+		$state = $summary['state'];
+		$text = MMR_Data::credit_chip( $summary );
+	} else {
+		$state = 'none';
+		$text = __( 'No credit set', 'mm-register' );
+	}
+	echo '<a class="mmr-status-chip mmr-status-chip--' . esc_attr( $state ) . ' mmr-credit-chip" href="' . esc_url( $url ) . '">' . esc_html( $text ) . '</a>';
+};
+
+/** Grosze → signed money text with a real minus sign, e.g. "−150,00 zł". */
+$credit_money = function ( $grosze, $plus = false ) {
+	$grosze = (int) $grosze;
+	if ( $grosze < 0 ) {
+		return '−' . mmr_money( abs( $grosze ) / 100 );
+	}
+	return ( $plus ? '+' : '' ) . mmr_money( $grosze / 100 );
+};
+
 /**
  * The Event cell of one billable line: chips for covering events, or a
  * Create event button (disabled with the reason when ineligible).
@@ -382,10 +447,157 @@ $line_attrs = function ( $line ) {
 		</section>
 	<?php endif; ?>
 
+	<?php if ( $credit_panel ) :
+		$cp_id = (int) $credit_panel->id;
+		$cp_sum = isset( $credit_summaries[ $cp_id ] ) ? $credit_summaries[ $cp_id ] : null;
+		$cp_ledger = $cp_sum ? MMR_Data::credit_ledger( $cp_id ) : array();
+		$cp_today = current_time( 'Y-m-d' );
+		?>
+		<section id="mmr-credit-panel" class="mmr-event-panel mmr-credit-panel" aria-labelledby="mmr-credit-panel-title">
+			<header class="mmr-event-panel__head">
+				<h3 id="mmr-credit-panel-title">
+					<?php
+					/* translators: %s: class name. */
+					printf( esc_html__( '%s — prepaid credit', 'mm-register' ), esc_html( $credit_panel->name ) );
+					?>
+				</h3>
+				<?php $render_credit_chip( $cp_id ); ?>
+				<a class="button-link mmr-credit-panel__close" href="<?php echo esc_url( mmr_page_url( 'settlement', array( 'period' => $period ) ) ); ?>"><?php esc_html_e( 'Close', 'mm-register' ); ?></a>
+			</header>
+
+			<?php if ( $cp_sum ) : ?>
+				<div class="mmr-credit-facts">
+					<div class="mmr-credit-fact">
+						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Paid in', 'mm-register' ); ?></span>
+						<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $cp_sum['paid'] ) ); ?></strong>
+						<span class="mmr-credit-fact__sub">
+							<?php
+							/* translators: 1: number of payments, 2: date of the first payment. */
+							echo esc_html( sprintf( _n( '%1$d payment since %2$s', '%1$d payments since %2$s', $cp_sum['payments'], 'mm-register' ), $cp_sum['payments'], mmr_date_label( $cp_sum['start'] ) ) );
+							?>
+						</span>
+					</div>
+					<div class="mmr-credit-fact">
+						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Used', 'mm-register' ); ?></span>
+						<strong class="mmr-credit-fact__value"><?php echo esc_html( $credit_money( $cp_sum['used'] ) ); ?></strong>
+						<span class="mmr-credit-fact__sub">
+							<?php
+							/* translators: %d: lessons taught since the credit started. */
+							echo esc_html( sprintf( _n( '%d lesson', '%d lessons', $cp_sum['taught'], 'mm-register' ), $cp_sum['taught'] ) );
+							?>
+						</span>
+					</div>
+					<div class="mmr-credit-fact">
+						<span class="mmr-credit-fact__label"><?php esc_html_e( 'Left now', 'mm-register' ); ?></span>
+						<strong class="mmr-credit-fact__value<?php echo $cp_sum['left'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $cp_sum['left'] ) ); ?></strong>
+						<span class="mmr-credit-fact__sub">
+							<?php
+							if ( $cp_sum['left'] < 0 ) {
+								/* translators: %s: amount owed beyond the credit. */
+								echo esc_html( sprintf( __( 'owes %s', 'mm-register' ), mmr_money( abs( $cp_sum['left'] ) / 100 ) ) );
+							} elseif ( null !== $cp_sum['left_lessons'] ) {
+								/* translators: %d: lessons the balance still covers. */
+								echo esc_html( sprintf( _n( '≈ %d lesson', '≈ %d lessons', $cp_sum['left_lessons'], 'mm-register' ), $cp_sum['left_lessons'] ) );
+							}
+							?>
+						</span>
+					</div>
+					<div class="mmr-credit-fact">
+						<span class="mmr-credit-fact__label"><?php esc_html_e( 'After booked', 'mm-register' ); ?></span>
+						<strong class="mmr-credit-fact__value<?php echo $cp_sum['projected'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $cp_sum['projected'] ) ); ?></strong>
+						<span class="mmr-credit-fact__sub">
+							<?php
+							if ( $cp_sum['booked'] > 0 ) {
+								/* translators: %d: lessons booked after today. */
+								echo esc_html( sprintf( _n( '%d booked ahead', '%d booked ahead', $cp_sum['booked'], 'mm-register' ), $cp_sum['booked'] ) );
+							} else {
+								esc_html_e( 'nothing booked ahead', 'mm-register' );
+							}
+							?>
+						</span>
+					</div>
+				</div>
+
+				<div class="mmr-credit-ledger-scroll">
+					<table class="mmr-subtable mmr-credit-ledger">
+						<thead>
+							<tr>
+								<th scope="col"><?php esc_html_e( 'Date', 'mm-register' ); ?></th>
+								<th scope="col"><?php esc_html_e( 'Item', 'mm-register' ); ?></th>
+								<th scope="col" class="mmr-num"><?php esc_html_e( 'Amount', 'mm-register' ); ?></th>
+								<th scope="col" class="mmr-num"><?php esc_html_e( 'Balance', 'mm-register' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php
+							$cp_rule_done = false;
+							foreach ( $cp_ledger as $item ) :
+								if ( 'booked' === $item['kind'] && ! $cp_rule_done ) :
+									$cp_rule_done = true;
+									?>
+									<tr class="mmr-credit-ledger__today">
+										<td colspan="4">
+											<span class="screen-reader-text">
+												<?php
+												/* translators: %s: today's date. */
+												echo esc_html( sprintf( __( 'Today, %s — booked lessons below', 'mm-register' ), mmr_date_label( $cp_today ) ) );
+												?>
+											</span>
+										</td>
+									</tr>
+								<?php endif; ?>
+								<tr class="mmr-credit-ledger__<?php echo esc_attr( $item['kind'] ); ?>">
+									<td><?php echo esc_html( mmr_date_label( $item['date'] ) ); ?></td>
+									<td>
+										<?php echo esc_html( $item['label'] ); ?>
+										<?php if ( '' !== $item['note'] ) : ?>
+											<span class="mmr-muted"> — <?php echo esc_html( $item['note'] ); ?></span>
+										<?php endif; ?>
+									</td>
+									<td class="mmr-num"><?php echo esc_html( $credit_money( $item['amount'], 'payment' === $item['kind'] ) ); ?></td>
+									<td class="mmr-num<?php echo $item['balance'] < 0 ? ' mmr-credit-neg' : ''; ?>"><?php echo esc_html( $credit_money( $item['balance'] ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php else : ?>
+				<p class="mmr-muted"><?php esc_html_e( 'No credit recorded for this class yet. Add the first payment below — its date starts the countdown.', 'mm-register' ); ?></p>
+			<?php endif; ?>
+
+			<form method="post" class="mmr-credit-topup">
+				<?php wp_nonce_field( 'mmr_form' ); ?>
+				<input type="hidden" name="mmr_action" value="settle_add_credit">
+				<input type="hidden" name="period" value="<?php echo esc_attr( $period ); ?>">
+				<input type="hidden" name="class_id" value="<?php echo esc_attr( $cp_id ); ?>">
+				<label>
+					<span><?php esc_html_e( 'Date', 'mm-register' ); ?></span>
+					<input type="date" name="credit_date" value="<?php echo esc_attr( $cp_today ); ?>" required>
+				</label>
+				<label>
+					<span><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></span>
+					<input type="text" name="amount" class="mmr-input-fee" inputmode="decimal" required>
+				</label>
+				<label class="mmr-credit-topup__note">
+					<span><?php esc_html_e( 'Note', 'mm-register' ); ?></span>
+					<input type="text" name="note" maxlength="190">
+				</label>
+				<button type="submit" class="button button-primary"><?php echo $cp_sum ? esc_html__( 'Add top-up', 'mm-register' ) : esc_html__( 'Add credit', 'mm-register' ); ?></button>
+			</form>
+		</section>
+	<?php endif; ?>
+
 	<div class="mmr-filterbar mmr-settle-filterbar">
 		<label class="screen-reader-text" for="mmr-class-filter"><?php esc_html_e( 'Filter classes', 'mm-register' ); ?></label>
 		<input type="search" id="mmr-class-filter" autocomplete="off"
-			placeholder="<?php esc_attr_e( 'Filter by class, company or settle method…', 'mm-register' ); ?>">
+			placeholder="<?php esc_attr_e( 'Filter by class or company…', 'mm-register' ); ?>">
+		<label class="screen-reader-text" for="mmr-method-filter"><?php esc_html_e( 'Filter by settle method', 'mm-register' ); ?></label>
+		<select id="mmr-method-filter">
+			<option value=""><?php esc_html_e( 'All settle methods', 'mm-register' ); ?></option>
+			<?php foreach ( MMR_Data::class_field_values( 'settle_method' ) as $sm ) : ?>
+				<option value="<?php echo esc_attr( $sm ); ?>"><?php echo esc_html( $sm ); ?></option>
+			<?php endforeach; ?>
+		</select>
 		<button type="button" class="button" id="mmr-class-filter-clear" hidden><?php esc_html_e( 'Clear', 'mm-register' ); ?></button>
 		<span class="mmr-muted" id="mmr-class-filter-count" role="status" aria-live="polite"></span>
 	</div>
@@ -458,7 +670,10 @@ $line_attrs = function ( $line ) {
 						<td><strong><?php echo esc_html( $row['class_name'] ); ?></strong></td>
 						<td><?php echo esc_html( $row['client_type'] ); ?></td>
 						<td><?php echo esc_html( $row['company'] ); ?></td>
-						<td><?php echo esc_html( $row['settle_method'] ); ?></td>
+						<td>
+							<?php echo esc_html( $row['settle_method'] ); ?>
+							<?php if ( $is_credit_method( $row['settle_method'] ) ) { $render_credit_chip( $row['class_id'] ); } ?>
+						</td>
 						<td class="mmr-num"><?php echo (int) $row['lesson_count']; ?></td>
 						<td class="mmr-muted"><?php echo esc_html( implode( ', ', $fee_parts ) ); ?></td>
 						<td class="mmr-num">
@@ -551,6 +766,34 @@ $line_attrs = function ( $line ) {
 							</td>
 						</tr>
 					<?php endif; ?>
+				<?php endforeach; ?>
+				<?php
+				// Active rozliczenie classes with no lesson this month: shown only
+				// while the method filter is on rozliczenie. No billable-line data
+				// and no checkbox, so selection, events and totals never see them.
+				$credit_only_companies = $credit_only ? MMR_Data::company_names() : array();
+				foreach ( $credit_only as $co_class ) :
+					$co_company = ( $co_class->company_id && isset( $credit_only_companies[ (int) $co_class->company_id ] ) ) ? $credit_only_companies[ (int) $co_class->company_id ] : '';
+					?>
+					<tr class="mmr-settle-row mmr-credit-only mmr-filtered-out"
+						data-sort-class="<?php echo esc_attr( $co_class->name ); ?>"
+						data-sort-company="<?php echo esc_attr( $co_company ); ?>"
+						data-sort-method="<?php echo esc_attr( (string) $co_class->settle_method ); ?>"
+						data-class-total="0">
+						<td class="mmr-select-cell"></td>
+						<td><strong><?php echo esc_html( $co_class->name ); ?></strong></td>
+						<td><?php echo esc_html( $co_class->client_type ); ?></td>
+						<td><?php echo esc_html( $co_company ); ?></td>
+						<td>
+							<?php echo esc_html( $co_class->settle_method ); ?>
+							<?php $render_credit_chip( $co_class->id ); ?>
+						</td>
+						<td class="mmr-num">0</td>
+						<td class="mmr-muted">—</td>
+						<td class="mmr-num">—</td>
+						<td><?php echo (int) MMR_Data::member_count( $co_class->id ); ?></td>
+						<td class="mmr-event-cell">—</td>
+					</tr>
 				<?php endforeach; ?>
 			</tbody>
 			<tfoot>
