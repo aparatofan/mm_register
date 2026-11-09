@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.8.0
+Stable tag: 2.9.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,16 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.9.0 =
+* Per-member prepaid credit: in a rozliczenie class with "Members pay
+  separately" and at least two members, each payment belongs to one member
+  (Paid by) and each member has their own balance from their share of the
+  lessons they were in. Group chip on the class row, member chips on member
+  lines, a members table in the credit panel and a Paid by field on top-ups.
+  Payments with no member are listed as unassigned. DB version 2.6 adds
+  mmr_class_credits.student_id only.
+* Export version 7 (credits[].student_ref); version 6 files still import.
 
 = 2.8.0 =
 * Prepaid credit for rozliczenie classes: payments (credit + top-ups) on the

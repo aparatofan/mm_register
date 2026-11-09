@@ -361,8 +361,9 @@ class MMR_Data {
 	 * Payments of several classes, in one query (no N+1 on the Classes page).
 	 *
 	 * @param int[] $class_ids Class IDs.
-	 * @return array class_id => list of [ id, credit_date, amount, note ],
-	 *               ordered by credit_date, then id. `amount` is the DECIMAL string.
+	 * @return array class_id => list of [ id, student_id (0 when NULL),
+	 *               credit_date, amount, note ], ordered by credit_date, then id.
+	 *               `amount` is the DECIMAL string.
 	 */
 	public static function credits_for_classes( array $class_ids ) {
 		global $wpdb;
@@ -373,7 +374,7 @@ class MMR_Data {
 		$t = MMR_DB::table( 'class_credits' );
 		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
 		$rows = $wpdb->get_results( $wpdb->prepare(
-			"SELECT id, class_id, credit_date, amount, note FROM {$t}
+			"SELECT id, class_id, student_id, credit_date, amount, note FROM {$t}
 			 WHERE class_id IN ({$placeholders})
 			 ORDER BY credit_date ASC, id ASC",
 			$ids
@@ -382,6 +383,7 @@ class MMR_Data {
 		foreach ( $rows as $row ) {
 			$map[ (int) $row->class_id ][] = array(
 				'id'          => (int) $row->id,
+				'student_id'  => (int) $row->student_id,
 				'credit_date' => $row->credit_date,
 				'amount'      => $row->amount,
 				'note'        => (string) $row->note,
@@ -424,14 +426,21 @@ class MMR_Data {
 	 * deletes every payment.
 	 *
 	 * @param int   $class_id Class ID.
-	 * @param array $rows     List of [ date (Y-m-d), amount (float złoty), note ].
+	 * @param array $rows     List of [ date (Y-m-d), amount (float złoty), note,
+	 *                        student_id (optional; 0/empty stores NULL) ].
 	 */
 	public static function set_class_credits( $class_id, array $rows ) {
 		global $wpdb;
 		$t = MMR_DB::table( 'class_credits' );
 		$wpdb->delete( $t, array( 'class_id' => (int) $class_id ), array( '%d' ) );
 		foreach ( $rows as $row ) {
-			self::insert_credit( $class_id, $row['date'], $row['amount'], isset( $row['note'] ) ? $row['note'] : '' );
+			self::insert_credit(
+				$class_id,
+				$row['date'],
+				$row['amount'],
+				isset( $row['note'] ) ? $row['note'] : '',
+				isset( $row['student_id'] ) ? $row['student_id'] : 0
+			);
 		}
 	}
 
@@ -441,23 +450,26 @@ class MMR_Data {
 	 * @param int    $class_id Class ID.
 	 * @param string $date     Y-m-d.
 	 * @param float  $amount   Złoty.
-	 * @param string $note     Free text (cut to 190 characters).
+	 * @param string $note       Free text (cut to 190 characters).
+	 * @param int    $student_id Who paid; 0/empty stores NULL (unassigned / pot).
 	 * @return int New ID.
 	 */
-	protected static function insert_credit( $class_id, $date, $amount, $note ) {
+	protected static function insert_credit( $class_id, $date, $amount, $note, $student_id = 0 ) {
 		global $wpdb;
 		$note = mb_substr( (string) $note, 0, 190 );
+		$student_id = absint( $student_id );
 		$wpdb->insert(
 			MMR_DB::table( 'class_credits' ),
 			array(
 				'class_id'    => (int) $class_id,
+				'student_id'  => $student_id ? $student_id : null,
 				'credit_date' => $date,
 				// String, so no float ever reaches the DECIMAL column.
 				'amount'      => number_format( (float) $amount, 2, '.', '' ),
 				'note'        => '' === $note ? null : $note,
 				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '' === $note ? null : '%s', '%s' )
+			array( '%d', $student_id ? '%d' : null, '%s', '%s', '' === $note ? null : '%s', '%s' )
 		);
 		return (int) $wpdb->insert_id;
 	}
@@ -468,10 +480,13 @@ class MMR_Data {
 	 * @param int    $class_id Class ID.
 	 * @param string $date     Y-m-d.
 	 * @param float  $amount   Złoty, must be > 0.
-	 * @param string $note     Free text.
+	 * @param string $note       Free text.
+	 * @param int    $student_id Who paid. Required (a current member) in
+	 *                           per-member mode; in a pot class kept only when
+	 *                           it is a current member, else NULL.
 	 * @return int|WP_Error New payment ID.
 	 */
-	public static function add_class_credit( $class_id, $date, $amount, $note ) {
+	public static function add_class_credit( $class_id, $date, $amount, $note, $student_id = 0 ) {
 		$class = self::class_row( (int) $class_id );
 		if ( ! $class ) {
 			return new WP_Error( 'mmr_credit_class', __( 'Unknown class.', 'mm-register' ) );
@@ -485,7 +500,16 @@ class MMR_Data {
 		if ( self::to_grosze( $amount ) <= 0 ) {
 			return new WP_Error( 'mmr_credit_amount', __( 'Payment amounts must be above 0.', 'mm-register' ) );
 		}
-		$id = self::insert_credit( (int) $class->id, $date, $amount, $note );
+		$student_id = absint( $student_id );
+		$is_member = $student_id && in_array( $student_id, array_map( 'intval', wp_list_pluck( self::class_members( (int) $class->id ), 'student_id' ) ), true );
+		if ( self::is_per_member_credit( $class ) ) {
+			if ( ! $is_member ) {
+				return new WP_Error( 'mmr_credit_student', __( 'Choose who paid.', 'mm-register' ) );
+			}
+		} elseif ( ! $is_member ) {
+			$student_id = 0;
+		}
+		$id = self::insert_credit( (int) $class->id, $date, $amount, $note, $student_id );
 		if ( ! $id ) {
 			return new WP_Error( 'mmr_credit_db', __( 'The payment could not be saved.', 'mm-register' ) );
 		}
@@ -573,13 +597,7 @@ class MMR_Data {
 			$fee = isset( $fee_map[ $cid ] ) ? $fee_map[ $cid ] : 0;
 			$left_lessons = $fee > 0 ? (int) floor( $left / $fee ) : null;
 
-			if ( $left < 0 ) {
-				$state = 'danger';
-			} elseif ( null !== $left_lessons && $left_lessons <= 2 ) {
-				$state = 'warn';
-			} else {
-				$state = 'good';
-			}
+			$state = self::credit_state( $left, $left_lessons );
 
 			$out[ $cid ] = array(
 				'start'        => $p->start,
@@ -600,35 +618,301 @@ class MMR_Data {
 	}
 
 	/**
-	 * Ledger of one class: payments plus lessons from the start date, in date
-	 * order. On the same date payments come first; lessons follow by slot.
+	 * The balance flag, for a class pot and for one member alike:
+	 * overdrawn → danger; ≤ 2 lessons left (0 = "Used up") → warn; else good.
 	 *
-	 * @param int $class_id Class ID.
-	 * @return array List of [ date, kind (payment|lesson|booked), label, note,
-	 *               amount (signed grosze), balance (running grosze),
-	 *               lesson_no (int|null) ]. Empty when there are no payments.
+	 * @param int      $left         Balance now, grosze.
+	 * @param int|null $left_lessons Lessons the balance still covers, or null.
+	 * @return string good|warn|danger
 	 */
-	public static function credit_ledger( $class_id ) {
-		global $wpdb;
-		$class_id = (int) $class_id;
-		$credits = self::credits_for_classes( array( $class_id ) );
-		if ( empty( $credits[ $class_id ] ) ) {
-			return array();
+	public static function credit_state( $left, $left_lessons ) {
+		if ( $left < 0 ) {
+			return 'danger';
 		}
-		$credits = $credits[ $class_id ];
-		$start = $credits[0]['credit_date']; // Ordered by date ASC.
-		$today = current_time( 'Y-m-d' );
+		if ( null !== $left_lessons && $left_lessons <= 2 ) {
+			return 'warn';
+		}
+		return 'good';
+	}
 
+	/**
+	 * Per-member credit mode (2.9): the class maps to rozliczenie, has
+	 * "Members pay separately" ticked and at least two current members — the
+	 * one place that decides it. Every other rozliczenie class is a pot.
+	 *
+	 * @param object $class Class row.
+	 * @return bool
+	 */
+	public static function is_per_member_credit( $class ) {
+		if ( ! $class || 'rozliczenie' !== self::event_type_hint( $class->settle_method ) || empty( $class->pay_per_member ) ) {
+			return false;
+		}
+		return count( self::class_members( (int) $class->id ) ) >= 2;
+	}
+
+	/**
+	 * Lessons of a class from a date, each with its member shares in grosze.
+	 * Reads once; an empty shares_snapshot falls back to the live split, as
+	 * settlement() does (cached per fee, so no query per lesson).
+	 *
+	 * @param int    $class_id Class ID.
+	 * @param string $from     Y-m-d, inclusive.
+	 * @return array List of [ date, slot, shares (student_id => grosze) ],
+	 *               ordered by date, slot, id.
+	 */
+	protected static function member_share_lessons( $class_id, $from ) {
+		global $wpdb;
 		$l = MMR_DB::table( 'lessons' );
-		$lessons = $wpdb->get_results( $wpdb->prepare(
-			"SELECT id, lesson_date, slot, fee_snapshot FROM {$l}
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, lesson_date, slot, fee_snapshot, shares_snapshot FROM {$l}
 			 WHERE class_id = %d AND lesson_date >= %s
 			 ORDER BY lesson_date ASC, slot ASC, id ASC",
 			$class_id,
-			$start
+			$from
 		) ); // phpcs:ignore WordPress.DB.PreparedSQL
 
-		// Merge two already-sorted lists; a payment wins a date tie.
+		$fallback = array(); // fee string => shares.
+		$out = array();
+		foreach ( $rows as $row ) {
+			$shares = array();
+			if ( ! empty( $row->shares_snapshot ) ) {
+				$decoded = json_decode( $row->shares_snapshot, true );
+				if ( is_array( $decoded ) ) {
+					$shares = $decoded;
+				}
+			}
+			if ( empty( $shares ) ) {
+				$key = number_format( (float) $row->fee_snapshot, 2, '.', '' );
+				if ( ! isset( $fallback[ $key ] ) ) {
+					$fallback[ $key ] = self::compute_share_snapshot( $class_id, (float) $row->fee_snapshot );
+				}
+				$shares = $fallback[ $key ];
+			}
+			$grosze = array();
+			foreach ( $shares as $sid => $amount ) {
+				$grosze[ (int) $sid ] = self::to_grosze( $amount );
+			}
+			$out[] = array(
+				'date'   => $row->lesson_date,
+				'slot'   => (int) $row->slot,
+				'shares' => $grosze,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * Per-member balances of one class (2.9).
+	 *
+	 * Members listed = current members (by name), then any former member who
+	 * has payments, flagged `former`. A member's start is their own earliest
+	 * payment; Used = Σ their share in each lesson from that start up to and
+	 * including today, and only lessons whose snapshot contains them — so a
+	 * member who joined later is never charged for earlier lessons. Payments
+	 * with no student, or a student who no longer exists, are unassigned and
+	 * count toward nobody.
+	 *
+	 * @param int $class_id Class ID.
+	 * @return array [
+	 *     members    => student_id => null (no payments) | summary with the
+	 *                   credit_summaries() keys (`fee` = current share) plus
+	 *                   name, former (bool), share (grosze|null),
+	 *     roster     => student_id => [ name, former ] for every listed member,
+	 *     unassigned => [ count, sum (grosze) ],
+	 *     group      => [ state (danger|warn|none|good), text ],
+	 * ]
+	 */
+	public static function member_credit_summaries( $class_id ) {
+		$class_id = (int) $class_id;
+		$class = self::class_row( $class_id );
+		$out = array(
+			'members'    => array(),
+			'roster'     => array(),
+			'unassigned' => array( 'count' => 0, 'sum' => 0 ),
+			'group'      => array( 'state' => 'none', 'text' => '' ),
+		);
+		if ( ! $class ) {
+			return $out;
+		}
+		$today = current_time( 'Y-m-d' );
+
+		$current = array(); // student_id => name, ordered by name.
+		foreach ( self::class_members( $class_id ) as $m ) {
+			$current[ (int) $m->student_id ] = $m->student_name;
+		}
+		$credits = self::credits_for_classes( array( $class_id ) );
+		$credits = isset( $credits[ $class_id ] ) ? $credits[ $class_id ] : array();
+
+		// Who paid what. Non-members only count when the student still exists.
+		$by_student = array();
+		$others = array();
+		foreach ( $credits as $c ) {
+			if ( $c['student_id'] && ! isset( $current[ $c['student_id'] ] ) ) {
+				$others[] = $c['student_id'];
+			}
+		}
+		$former_rows = self::students_by_ids( $others );
+		foreach ( $credits as $c ) {
+			$sid = $c['student_id'];
+			if ( ! $sid || ( ! isset( $current[ $sid ] ) && ! isset( $former_rows[ $sid ] ) ) ) {
+				$out['unassigned']['count']++;
+				$out['unassigned']['sum'] += self::to_grosze( $c['amount'] );
+				continue;
+			}
+			$by_student[ $sid ][] = $c;
+		}
+
+		foreach ( $current as $sid => $name ) {
+			$out['roster'][ $sid ] = array( 'name' => $name, 'former' => false );
+		}
+		$former = array();
+		foreach ( array_keys( $by_student ) as $sid ) {
+			if ( ! isset( $current[ $sid ] ) ) {
+				$former[ $sid ] = $former_rows[ $sid ]->name;
+			}
+		}
+		asort( $former );
+		foreach ( $former as $sid => $name ) {
+			$out['roster'][ $sid ] = array( 'name' => $name, 'former' => true );
+		}
+
+		// Lessons once, from the earliest member start.
+		$starts = array();
+		foreach ( $by_student as $sid => $list ) {
+			$starts[ $sid ] = $list[0]['credit_date']; // Ordered by date ASC.
+		}
+		$lessons = $starts ? self::member_share_lessons( $class_id, min( $starts ) ) : array();
+
+		$current_shares = self::compute_share_snapshot( $class_id, (float) $class->fee );
+
+		$counts = array( 'danger' => 0, 'warn' => 0, 'used_up' => 0, 'none' => 0 );
+		foreach ( $out['roster'] as $sid => $info ) {
+			if ( ! isset( $by_student[ $sid ] ) ) {
+				$out['members'][ $sid ] = null;
+				$counts['none']++;
+				continue;
+			}
+			$paid = 0;
+			foreach ( $by_student[ $sid ] as $c ) {
+				$paid += self::to_grosze( $c['amount'] );
+			}
+			$used = 0;
+			$booked_sum = 0;
+			$taught = 0;
+			$booked = 0;
+			foreach ( $lessons as $le ) {
+				if ( $le['date'] < $starts[ $sid ] || ! isset( $le['shares'][ $sid ] ) ) {
+					continue;
+				}
+				if ( $le['date'] <= $today ) {
+					$used += $le['shares'][ $sid ];
+					$taught++;
+				} else {
+					$booked_sum += $le['shares'][ $sid ];
+					$booked++;
+				}
+			}
+			$share = ( isset( $current[ $sid ], $current_shares[ $sid ] ) ) ? self::to_grosze( $current_shares[ $sid ] ) : null;
+			if ( 0 === $share ) {
+				$share = null;
+			}
+			$left = $paid - $used;
+			$left_lessons = null !== $share ? (int) floor( $left / $share ) : null;
+			$state = self::credit_state( $left, $left_lessons );
+
+			$out['members'][ $sid ] = array(
+				'start'        => $starts[ $sid ],
+				'payments'     => count( $by_student[ $sid ] ),
+				'paid'         => $paid,
+				'used'         => $used,
+				'left'         => $left,
+				'booked_sum'   => $booked_sum,
+				'projected'    => $left - $booked_sum,
+				'taught'       => $taught,
+				'booked'       => $booked,
+				'fee'          => null === $share ? 0 : $share,
+				'left_lessons' => $left_lessons,
+				'state'        => $state,
+				'name'         => $info['name'],
+				'former'       => $info['former'],
+				'share'        => $share,
+			);
+			if ( 'danger' === $state ) {
+				$counts['danger']++;
+			} elseif ( 'warn' === $state ) {
+				$counts['warn']++;
+				if ( 0 === $left_lessons ) {
+					$counts['used_up']++;
+				}
+			}
+		}
+
+		// Group chip: the member needing attention most. The one place that
+		// writes these texts.
+		$n = count( $out['roster'] );
+		if ( $counts['danger'] ) {
+			/* translators: 1: members overdrawn, 2: members listed. */
+			$out['group'] = array( 'state' => 'danger', 'text' => sprintf( _n( '%1$d of %2$d overdrawn', '%1$d of %2$d overdrawn', $n, 'mm-register' ), $counts['danger'], $n ) );
+		} elseif ( $counts['warn'] && $counts['used_up'] === $counts['warn'] ) {
+			/* translators: 1: members used up, 2: members listed. */
+			$out['group'] = array( 'state' => 'warn', 'text' => sprintf( _n( '%1$d of %2$d used up', '%1$d of %2$d used up', $n, 'mm-register' ), $counts['warn'], $n ) );
+		} elseif ( $counts['warn'] ) {
+			/* translators: 1: members running low, 2: members listed. */
+			$out['group'] = array( 'state' => 'warn', 'text' => sprintf( _n( '%1$d of %2$d running low', '%1$d of %2$d running low', $n, 'mm-register' ), $counts['warn'], $n ) );
+		} elseif ( $counts['none'] ) {
+			/* translators: 1: members without a payment, 2: members listed. */
+			$out['group'] = array( 'state' => 'none', 'text' => sprintf( _n( '%1$d of %2$d without credit', '%1$d of %2$d without credit', $n, 'mm-register' ), $counts['none'], $n ) );
+		} elseif ( $out['unassigned']['count'] ) {
+			$out['group'] = array( 'state' => 'none', 'text' => __( 'Payments not assigned', 'mm-register' ) );
+		} else {
+			/* translators: %d: members listed. */
+			$out['group'] = array( 'state' => 'good', 'text' => sprintf( _n( 'All %d in credit', 'All %d in credit', $n, 'mm-register' ), $n ) );
+		}
+		return $out;
+	}
+
+	/**
+	 * Ledger of one member in a per-member class: their payments plus their
+	 * share in every lesson from their start that contains them. Same item
+	 * shape and ordering as credit_ledger(); lesson numbers count only this
+	 * member's lessons.
+	 *
+	 * @param int $class_id   Class ID.
+	 * @param int $student_id Student ID.
+	 * @return array Empty when the member has no payments.
+	 */
+	public static function member_credit_ledger( $class_id, $student_id ) {
+		$class_id = (int) $class_id;
+		$student_id = (int) $student_id;
+		$credits = self::credits_for_classes( array( $class_id ) );
+		$mine = array();
+		foreach ( isset( $credits[ $class_id ] ) ? $credits[ $class_id ] : array() as $c ) {
+			if ( $c['student_id'] === $student_id ) {
+				$mine[] = $c;
+			}
+		}
+		if ( ! $student_id || empty( $mine ) ) {
+			return array();
+		}
+		$lessons = array();
+		foreach ( self::member_share_lessons( $class_id, $mine[0]['credit_date'] ) as $le ) {
+			if ( isset( $le['shares'][ $student_id ] ) ) {
+				$lessons[] = array( 'date' => $le['date'], 'amount' => $le['shares'][ $student_id ] );
+			}
+		}
+		return self::merge_ledger( $mine, $lessons );
+	}
+
+	/**
+	 * Merge sorted payments and sorted lesson charges into ledger items; a
+	 * payment wins a date tie. Shared by the class and member ledgers.
+	 *
+	 * @param array $credits credits_for_classes() rows, date order.
+	 * @param array $lessons List of [ date, amount (grosze, positive) ], date/slot order.
+	 * @return array
+	 */
+	protected static function merge_ledger( array $credits, array $lessons ) {
+		$today = current_time( 'Y-m-d' );
 		$items = array();
 		$pi = 0;
 		$li = 0;
@@ -637,7 +921,7 @@ class MMR_Data {
 		$balance = 0;
 		$lesson_no = 0;
 		while ( $pi < $pn || $li < $ln ) {
-			$take_payment = $pi < $pn && ( $li >= $ln || $credits[ $pi ]['credit_date'] <= $lessons[ $li ]->lesson_date );
+			$take_payment = $pi < $pn && ( $li >= $ln || $credits[ $pi ]['credit_date'] <= $lessons[ $li ]['date'] );
 			if ( $take_payment ) {
 				$p = $credits[ $pi ];
 				$amount = self::to_grosze( $p['amount'] );
@@ -655,12 +939,12 @@ class MMR_Data {
 				continue;
 			}
 			$le = $lessons[ $li ];
-			$amount = -self::to_grosze( $le->fee_snapshot );
+			$amount = -$le['amount'];
 			$balance += $amount;
 			$lesson_no++;
-			$booked = $le->lesson_date > $today;
+			$booked = $le['date'] > $today;
 			$items[] = array(
-				'date'      => $le->lesson_date,
+				'date'      => $le['date'],
 				'kind'      => $booked ? 'booked' : 'lesson',
 				/* translators: %d: lesson number since the credit started. */
 				'label'     => $booked ? __( 'Lesson (booked)', 'mm-register' ) : sprintf( __( 'Lesson #%d', 'mm-register' ), $lesson_no ),
@@ -672,6 +956,40 @@ class MMR_Data {
 			$li++;
 		}
 		return $items;
+	}
+
+	/**
+	 * Ledger of one class: payments plus lessons from the start date, in date
+	 * order. On the same date payments come first; lessons follow by slot.
+	 *
+	 * @param int $class_id Class ID.
+	 * @return array List of [ date, kind (payment|lesson|booked), label, note,
+	 *               amount (signed grosze), balance (running grosze),
+	 *               lesson_no (int|null) ]. Empty when there are no payments.
+	 */
+	public static function credit_ledger( $class_id ) {
+		global $wpdb;
+		$class_id = (int) $class_id;
+		$credits = self::credits_for_classes( array( $class_id ) );
+		if ( empty( $credits[ $class_id ] ) ) {
+			return array();
+		}
+		$credits = $credits[ $class_id ];
+		$start = $credits[0]['credit_date']; // Ordered by date ASC.
+
+		$l = MMR_DB::table( 'lessons' );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, lesson_date, slot, fee_snapshot FROM {$l}
+			 WHERE class_id = %d AND lesson_date >= %s
+			 ORDER BY lesson_date ASC, slot ASC, id ASC",
+			$class_id,
+			$start
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$lessons = array();
+		foreach ( $rows as $row ) {
+			$lessons[] = array( 'date' => $row->lesson_date, 'amount' => self::to_grosze( $row->fee_snapshot ) );
+		}
+		return self::merge_ledger( $credits, $lessons );
 	}
 
 	/**

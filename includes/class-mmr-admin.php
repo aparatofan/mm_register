@@ -288,17 +288,8 @@ class MMR_Admin {
 			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
 
-		// Prepaid credit rows are parsed before anything is saved, so a bad
-		// row saves nothing. null = leave the stored payments untouched (box
-		// hidden / not a rozliczenie class / a form without the box).
-		$credits = null;
-		if ( ! empty( $_POST['credits_present'] ) && 'rozliczenie' === MMR_Data::event_type_hint( $data['settle_method'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
-			$credits = $this->parse_credit_rows();
-		}
-
-		$class_id = MMR_Data::save_class( $data, $id );
-
-		// Members repeater.
+		// Members repeater — parsed first, since the credit rows are checked
+		// against the posted members; saved after the class below.
 		$members = array();
 		$student_ids = isset( $_POST['member_student_id'] ) ? (array) wp_unslash( $_POST['member_student_id'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
 		$shares = isset( $_POST['member_share'] ) ? (array) wp_unslash( $_POST['member_share'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
@@ -313,6 +304,21 @@ class MMR_Admin {
 				'share'      => ( '' === $share_raw ) ? null : mmr_sanitize_money( $share_raw ),
 			);
 		}
+
+		// Prepaid credit rows are parsed before anything is saved, so a bad
+		// row saves nothing. null = leave the stored payments untouched (box
+		// hidden / not a rozliczenie class / a form without the box).
+		// Per-member mode is decided from the posted data, mirroring
+		// MMR_Data::is_per_member_credit(): rozliczenie + Members pay
+		// separately + ≥ 2 posted members.
+		$credits = null;
+		if ( ! empty( $_POST['credits_present'] ) && 'rozliczenie' === MMR_Data::event_type_hint( $data['settle_method'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			$member_ids = array_values( array_unique( wp_list_pluck( $members, 'student_id' ) ) );
+			$per_member = $data['pay_per_member'] && count( $member_ids ) >= 2;
+			$credits = $this->parse_credit_rows( $id, $member_ids, $per_member );
+		}
+
+		$class_id = MMR_Data::save_class( $data, $id );
 		MMR_Data::set_members( $class_id, $members );
 
 		// An empty list deletes every payment — that is what removing every row means.
@@ -329,12 +335,37 @@ class MMR_Admin {
 	 * but no amount is skipped too: the box offers one row dated today, and
 	 * leaving it empty must not block saving the class.
 	 *
-	 * @return array List of [ date, amount (float), note ].
+	 * Who paid (2.9): a payer is accepted when they are among the posted
+	 * members, or already stored as the payer of one of this class's
+	 * payments (a former member — switching modes or members never rewrites
+	 * a stored payer). In per-member mode every kept row needs one; in a pot
+	 * class anyone else is stored as NULL.
+	 *
+	 * @param int   $class_id   Existing class ID, or 0 for a new class.
+	 * @param int[] $member_ids Posted member student IDs.
+	 * @param bool  $per_member Per-member mode, from the posted data.
+	 * @return array List of [ date, amount (float), note, student_id ].
 	 */
-	protected function parse_credit_rows() {
-		$dates   = isset( $_POST['credit_date'] ) ? (array) wp_unslash( $_POST['credit_date'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
-		$amounts = isset( $_POST['credit_amount'] ) ? (array) wp_unslash( $_POST['credit_amount'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
-		$notes   = isset( $_POST['credit_note'] ) ? (array) wp_unslash( $_POST['credit_note'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+	protected function parse_credit_rows( $class_id, array $member_ids, $per_member ) {
+		$dates    = isset( $_POST['credit_date'] ) ? (array) wp_unslash( $_POST['credit_date'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$amounts  = isset( $_POST['credit_amount'] ) ? (array) wp_unslash( $_POST['credit_amount'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$notes    = isset( $_POST['credit_note'] ) ? (array) wp_unslash( $_POST['credit_note'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$students = isset( $_POST['credit_student'] ) ? (array) wp_unslash( $_POST['credit_student'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+
+		$allowed = array_fill_keys( array_map( 'intval', $member_ids ), true );
+		if ( $class_id ) {
+			$stored = MMR_Data::credits_for_classes( array( $class_id ) );
+			$stored_ids = array();
+			foreach ( isset( $stored[ $class_id ] ) ? $stored[ $class_id ] : array() as $credit ) {
+				if ( $credit['student_id'] ) {
+					$stored_ids[] = $credit['student_id'];
+				}
+			}
+			// Only students that still exist count as former members.
+			foreach ( array_keys( MMR_Data::students_by_ids( $stored_ids ) ) as $sid ) {
+				$allowed[ (int) $sid ] = true;
+			}
+		}
 
 		$rows = array();
 		foreach ( $amounts as $i => $amount_raw ) {
@@ -349,6 +380,14 @@ class MMR_Admin {
 			if ( is_wp_error( $row ) ) {
 				$this->redirect( 'classes', $row->get_error_message(), array(), true );
 			}
+			$sid = isset( $students[ $i ] ) ? absint( $students[ $i ] ) : 0;
+			if ( ! isset( $allowed[ $sid ] ) ) {
+				$sid = 0;
+			}
+			if ( $per_member && ! $sid ) {
+				$this->redirect( 'classes', __( 'Choose who paid each payment.', 'mm-register' ), array(), true );
+			}
+			$row['student_id'] = $sid;
 			$rows[] = $row;
 		}
 		return $rows;
@@ -582,16 +621,41 @@ class MMR_Admin {
 		}
 		$amount = $row['amount'];
 
-		$first = ! MMR_Data::credits_for_classes( array( $class_id ) );
-		$result = MMR_Data::add_class_credit( $class_id, $row['date'], $amount, $row['note'] );
+		$student_id = isset( $_POST['credit_student'] ) ? absint( $_POST['credit_student'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification
+		$class = MMR_Data::class_row( $class_id );
+		$per_member = $class && MMR_Data::is_per_member_credit( $class );
+
+		// "First" = the first payment of the class, or of that member in
+		// per-member mode (read before the insert).
+		$existing = MMR_Data::credits_for_classes( array( $class_id ) );
+		$existing = isset( $existing[ $class_id ] ) ? $existing[ $class_id ] : array();
+		if ( $per_member ) {
+			$back['member'] = $student_id;
+			$existing = array_filter( $existing, function ( $credit ) use ( $student_id ) {
+				return $credit['student_id'] === $student_id;
+			} );
+		}
+		$first = empty( $existing );
+
+		$result = MMR_Data::add_class_credit( $class_id, $row['date'], $amount, $row['note'], $student_id );
 		if ( is_wp_error( $result ) ) {
 			$this->redirect( 'settlement', $result->get_error_message(), $back, true );
 		}
-		$message = $first
-			/* translators: %s: amount, e.g. "3 600,00 zł". */
-			? sprintf( __( 'Credit of %s added.', 'mm-register' ), mmr_money( $amount ) )
-			/* translators: %s: amount, e.g. "500,00 zł". */
-			: sprintf( __( 'Top-up of %s added.', 'mm-register' ), mmr_money( $amount ) );
+		if ( $per_member ) {
+			$payer = MMR_Data::students_by_ids( array( $student_id ) );
+			$name = isset( $payer[ $student_id ] ) ? $payer[ $student_id ]->name : '';
+			$message = $first
+				/* translators: 1: amount, e.g. "750,00 zł", 2: member name. */
+				? sprintf( __( 'Credit of %1$s added for %2$s.', 'mm-register' ), mmr_money( $amount ), $name )
+				/* translators: 1: amount, e.g. "750,00 zł", 2: member name. */
+				: sprintf( __( 'Top-up of %1$s added for %2$s.', 'mm-register' ), mmr_money( $amount ), $name );
+		} else {
+			$message = $first
+				/* translators: %s: amount, e.g. "3 600,00 zł". */
+				? sprintf( __( 'Credit of %s added.', 'mm-register' ), mmr_money( $amount ) )
+				/* translators: %s: amount, e.g. "500,00 zł". */
+				: sprintf( __( 'Top-up of %s added.', 'mm-register' ), mmr_money( $amount ) );
+		}
 		wp_safe_redirect( mmr_page_url( 'settlement', array_merge( $back, array( 'mmr_notice' => $message ) ) ) . '#mmr-credit-panel' );
 		exit;
 	}

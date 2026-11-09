@@ -15,7 +15,7 @@ The importer is:
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "companies": [],
   "students": [],
   "classes": [],
@@ -40,6 +40,10 @@ type. A version 4 file imports unchanged: the missing fields default to
 **Version 6** (plugin 2.8.0) adds `classes[].credits`, the prepaid-credit
 payments of a rozliczenie class. A version 5 (or older) file has no `credits`
 key and imports unchanged: no payments are created.
+
+**Version 7** (plugin 2.9.0) adds `classes[].credits[].student_ref`, who paid
+a payment. A version 6 file has no `student_ref` and imports unchanged: its
+payments are stored unassigned.
 
 ## References (`ref`)
 
@@ -126,6 +130,7 @@ earliest one is the credit and starts the countdown, later ones are top-ups):
 | field | type | notes |
 |---|---|---|
 | `date` | string | **required**, `YYYY-MM-DD` |
+| `student_ref` | string \| null | optional (v7). Who paid — a student `ref` (or exact name), resolved like `members[].student_ref`. Absent, `null` or unresolved = unassigned |
 | `amount` | number \| string | **required**, above 0 (`3600`, `"3600.00"`, `"3 600,00"`) |
 | `note` | string | optional, cut to 190 characters |
 
@@ -133,12 +138,13 @@ Entries are validated exactly like the class form's *Prepaid credit* rows; an
 invalid entry (bad date, amount 0 or unparseable) is skipped silently.
 Payments are imported whatever the class's `settle_method`: a class switched
 away from rozliczenie keeps its payments hidden, so they round-trip. The
-balance is never imported — it is computed from the lessons' `fee_snapshot`.
+balance is never imported — it is computed from the lessons' `fee_snapshot`
+(or, in per-member mode, from each member's share in `shares_snapshot`).
 
 ```json
 "credits": [
-  { "date": "2026-03-02", "amount": 3600, "note": "zapłaciła z góry" },
-  { "date": "2026-09-14", "amount": 1800, "note": "" }
+  { "date": "2026-03-02", "student_ref": "s_kasia", "amount": 3600, "note": "zapłaciła z góry" },
+  { "date": "2026-09-14", "student_ref": null, "amount": 1800, "note": "" }
 ]
 ```
 
