@@ -466,6 +466,82 @@
 		updateCreditButton( box );
 	}
 
+	/* Prepayments are paid by (2.10): three toggle buttons writing one
+	   hidden input. NULL / unknown on the server reads as invoice. */
+	function setPrepayMethod( box, value ) {
+		var input = box.querySelector( '.mmr-prepay-input' );
+		var valid = [ 'invoice', 'revolut', 'cash' ];
+		if ( valid.indexOf( value ) < 0 ) { value = 'invoice'; }
+		if ( input ) { input.value = value; }
+		box.querySelectorAll( '.mmr-prepay-option' ).forEach( function ( btn ) {
+			btn.setAttribute( 'aria-pressed', btn.getAttribute( 'data-prepay' ) === value ? 'true' : 'false' );
+		} );
+	}
+
+	function creditTypeLabel( box, type ) {
+		var labels = {};
+		try { labels = JSON.parse( box.getAttribute( 'data-type-labels' ) || '{}' ) || {}; } catch ( err ) { labels = {}; }
+		return labels[ type ] || type;
+	}
+
+	/* The Event cell of a saved payment (2.10): Create draft when it has no
+	   event, else a chip — amber for a draft, green once issued. A new row
+	   keeps the template's "Draft on save". */
+	function renderCreditEvent( box, cell, credit ) {
+		if ( ! cell || ! credit || ! Number( credit.id ) ) { return; }
+		cell.textContent = '';
+		if ( ! Number( credit.event_id ) ) {
+			/* Submits the standalone form outside the modal (forms cannot
+			   nest); the button's own name/value carries the payment ID. */
+			cell.appendChild( el( 'button', {
+				'type': 'submit',
+				'class': 'button-link mmr-credit-create',
+				'form': 'mmr-credit-draft-form',
+				'name': 'credit_id',
+				'value': String( credit.id ),
+				'title': box.getAttribute( 'data-ev-create-title' ) || ''
+			}, box.getAttribute( 'data-ev-create' ) || 'Create draft' ) );
+			return;
+		}
+		var label = creditTypeLabel( box, credit.event_type );
+		if ( Number( credit.event_draft ) ) {
+			cell.appendChild( el( 'span', { 'class': 'mmr-credit-chip mmr-credit-chip--draft' },
+				( box.getAttribute( 'data-ev-draft' ) || 'Draft %s' ).replace( '%s', label ) ) );
+			return;
+		}
+		var text = label + ( ( 'invoice' === credit.event_type && credit.event_doc ) ? ' ' + credit.event_doc : '' );
+		cell.appendChild( el( 'span', { 'class': 'mmr-credit-chip mmr-credit-chip--issued', 'title': text }, text ) );
+	}
+
+	/* A payment whose event is issued is a snapshot: date, amount and payer
+	   are locked, and it cannot be removed. The payer select is disabled and
+	   a hidden copy posts in its place (same position, so the row's arrays
+	   stay aligned); data-locked keeps setCreditBoxVisible() from
+	   re-enabling it. The server checks the locks again. */
+	function lockCreditRow( box, frag, credit ) {
+		var date = frag.querySelector( '.mmr-credit-date' );
+		var amount = frag.querySelector( '.mmr-credit-amount' );
+		var payer = frag.querySelector( '.mmr-credit-student' );
+		var remove = frag.querySelector( '.mmr-remove-credit' );
+		if ( date ) { date.readOnly = true; }
+		if ( amount ) { amount.readOnly = true; }
+		if ( payer ) {
+			payer.setAttribute( 'data-locked', '1' );
+			payer.disabled = true;
+			payer.removeAttribute( 'name' );
+			payer.parentNode.insertBefore( el( 'input', {
+				'type': 'hidden',
+				'name': 'credit_student[]',
+				'class': 'mmr-credit-student-locked',
+				'value': String( credit.student_id || 0 )
+			} ), payer.nextSibling );
+		}
+		if ( remove ) {
+			remove.disabled = true;
+			remove.title = box.getAttribute( 'data-ev-locked' ) || 'Delete the event first';
+		}
+	}
+
 	function addCreditRow( box, credit ) {
 		var tpl = box.querySelector( '#mmr-credit-row-template' );
 		var rows = creditRowsBox( box );
@@ -475,7 +551,13 @@
 		var amount = frag.querySelector( '.mmr-credit-amount' );
 		var note = frag.querySelector( '.mmr-credit-note' );
 		var payer = frag.querySelector( '.mmr-credit-student' );
+		var idInput = frag.querySelector( '.mmr-credit-id' );
 		if ( credit ) {
+			if ( idInput ) { idInput.value = String( Number( credit.id ) || 0 ); }
+			renderCreditEvent( box, frag.querySelector( '.mmr-credit-event' ), credit );
+			if ( Number( credit.id ) && Number( credit.event_id ) && ! Number( credit.event_draft ) ) {
+				lockCreditRow( box, frag, credit );
+			}
 			/* The saved payer rides on the select, so it can be offered as
 			   "(no longer in class)" once they are no longer a member row. */
 			if ( payer && credit.student_id ) {
@@ -571,7 +653,7 @@
 	function setCreditBoxVisible( box, show ) {
 		box.hidden = ! show;
 		box.querySelectorAll( 'input, select' ).forEach( function ( input ) {
-			input.disabled = ! show;
+			input.disabled = ! show || input.hasAttribute( 'data-locked' );
 		} );
 		/* Shown with nothing entered yet: offer one row dated today. */
 		if ( show ) {
@@ -603,6 +685,7 @@
 			form.addEventListener( 'mmr:fill', function ( e ) {
 				var detail = e.detail || {};
 				box.hidden = true; // populate first, so new rows start disabled until sync().
+				setPrepayMethod( box, detail.prepay_method || 'invoice' );
 				populateCredits( box, detail.credits || [] );
 				sync();
 			} );
@@ -615,6 +698,12 @@
 		}
 
 		box.addEventListener( 'click', function ( e ) {
+			var prepay = e.target.closest ? e.target.closest( '.mmr-prepay-option' ) : null;
+			if ( prepay ) {
+				e.preventDefault();
+				setPrepayMethod( box, prepay.getAttribute( 'data-prepay' ) );
+				return;
+			}
 			if ( e.target.id === 'mmr-add-credit' ) {
 				e.preventDefault();
 				addCreditRow( box, null );
@@ -1463,6 +1552,10 @@
 		var selected = [];
 		var results = [];
 		var timer = null;
+		/* A prepaid payment's event (2.10) keeps its stored type: it is never
+		   re-derived from its class (which would give rozliczenie). The server
+		   enforces the same rule in MMR_Data::resolve_event_who(). */
+		var keepType = false;
 
 		function names( list ) {
 			return list.map( function ( c ) { return c.name; } ).join( ', ' );
@@ -1489,6 +1582,14 @@
 		}
 
 		function renderType() {
+			if ( keepType ) {
+				typeOut.hidden = true;
+				typeSelect.hidden = false;
+				typeNote.textContent = i18n.typeCredit || 'Prepaid credit payment — the type is how the class’s prepayments are paid.';
+				typeNote.hidden = false;
+				syncKsefField( form );
+				return;
+			}
 			var d = derive();
 			if ( d.resolved ) {
 				typeSelect.value = d.type;
@@ -1625,7 +1726,8 @@
 
 		return {
 			add: add,
-			set: function ( list ) {
+			set: function ( list, opts ) {
+				keepType = !! ( opts && opts.keepType );
 				selected = ( list || [] ).map( function ( c ) {
 					return {
 						id: Number( c.id ),
@@ -1844,7 +1946,7 @@
 		form.addEventListener( 'mmr:fill', function ( e ) {
 			var data = e.detail || {};
 			if ( who ) {
-				who.set( data.classes || [] );
+				who.set( data.classes || [], { keepType: 'credit' === data.source_kind } );
 			} else {
 				syncKsefField( form );
 			}

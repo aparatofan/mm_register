@@ -269,7 +269,12 @@ if ( ! function_exists( 'mmr_events_sort_header' ) ) {
 							<span class="mmr-status-chip mmr-status-chip--draft mmr-draft-chip"><?php esc_html_e( 'Draft', 'mm-register' ); ?></span>
 						<?php endif; ?>
 					</td>
-					<td><strong class="mmr-ellipsis" title="<?php echo esc_attr( $event->payer_label ); ?>"><?php echo esc_html( $event->payer_label ); ?></strong></td>
+					<td>
+						<strong class="mmr-ellipsis" title="<?php echo esc_attr( $event->payer_label ); ?>"><?php echo esc_html( $event->payer_label ); ?></strong>
+						<?php if ( 'credit' === $event->source_kind ) : ?>
+							<span class="mmr-muted mmr-event-sub"><?php esc_html_e( 'Prepaid credit', 'mm-register' ); ?></span>
+						<?php endif; ?>
+					</td>
 					<td class="mmr-num"><strong><?php echo mmr_money_esc( $event->amount ); ?></strong></td>
 					<td class="mmr-check-cell">
 						<?php if ( $is_invoice ) : ?>

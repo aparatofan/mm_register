@@ -206,6 +206,7 @@ class MMR_Plugin {
 					/* translators: %s: comma-separated class names. */
 					'typeUnmapped'  => __( 'No settle method on: %s. Pick the type for this event.', 'mm-register' ),
 					'typeFreeText'  => __( 'No class selected — pick the type for this event.', 'mm-register' ),
+					'typeCredit'    => __( 'Prepaid credit payment — the type is how the class’s prepayments are paid.', 'mm-register' ),
 					'noMethod'      => __( 'no settle method', 'mm-register' ),
 					'archived'      => __( 'archived', 'mm-register' ),
 					/* translators: %s: class name. */
