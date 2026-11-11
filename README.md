@@ -59,6 +59,19 @@ build step.**
   example entered before the class was split) are **unassigned**: they count
   toward nobody and the panel asks for them to be assigned in the class form.
   Unticking the box turns the class back into one pot; stored payers are kept.
+
+  **Prepaid payments as events (2.10).** How lessons are accounted is
+  unchanged (monthly rozliczenie events stay "Recorded"). How the prepayment
+  is paid is separate: the class's *Prepayments are paid by* (Invoice /
+  Revolut / Cash; NULL = invoice) sets the type of each payment's event. Every
+  new payment — class form or Settlement top-up — creates a **draft** event
+  (`source_kind = 'credit'`, `source_id` = payment ID, no period), issued by
+  hand in Events like any other draft. Older payments offer *Create draft*. A
+  draft follows its payment's amount and payer; an issued event locks the
+  payment's date, amount and payer, and the payment cannot be removed until
+  the event is deleted. Credit events keep their stored type (never derived
+  rozliczenie) and are refused by Settlement's draft refresh / remove-line.
+  Payments keep their IDs across class saves.
 - **Events** — the receivables register: every document issued (invoice /
   revolut / cash / rozliczenie) with KSEF · SENT · PAID ticks you flip inline, a payment date
   and a year-scoped **Outstanding** total. A document starts with **Who** — one
@@ -98,7 +111,8 @@ Invoices themselves are still issued in KSeF; Events only records them.
   adds `mmr_event_classes` and the `mmr_events.who_text` column — existing
   events keep their payer label and are never migrated. v2.5 only adds
   `mmr_class_credits` (prepaid-credit payments); nothing existing changes. v2.6 adds
-  `mmr_class_credits.student_id` (who paid); existing payments get NULL.
+  `mmr_class_credits.student_id` (who paid); existing payments get NULL. v2.7
+  adds `mmr_classes.prepay_method`; existing classes get NULL (= invoice).
 - All pages gated by `manage_options`; all writes via nonces + capability
   checks; all SQL via `$wpdb->prepare`; all output escaped.
 - Assets are enqueued **only** on the plugin's own admin screens (avoids the

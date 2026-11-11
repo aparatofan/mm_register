@@ -15,7 +15,7 @@ The importer is:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "companies": [],
   "students": [],
   "classes": [],
@@ -44,6 +44,10 @@ key and imports unchanged: no payments are created.
 **Version 7** (plugin 2.9.0) adds `classes[].credits[].student_ref`, who paid
 a payment. A version 6 file has no `student_ref` and imports unchanged: its
 payments are stored unassigned.
+
+**Version 8** (plugin 2.10.0) adds `classes[].prepay_method` and the `credit`
+event source (a prepaid payment's event). A version 7 file imports unchanged:
+`prepay_method` is stored as null (= invoice).
 
 ## References (`ref`)
 
@@ -110,6 +114,7 @@ its class via `class_ref` or `class_name`). Unknown references produce a
 | `company_ref` | string \| null | reference (or exact name) of a company; omit/`null` for private students |
 | `settle_method` | string | `invoice` / `REVOLUT` / `rozliczenie` / other |
 | `pay_per_member` | 0 \| 1 | optional, default 0. *Members pay separately*: the Settlement page offers one billable line (and one draft event) per member instead of one for the class |
+| `prepay_method` | `"invoice"` \| `"revolut"` \| `"cash"` \| null | optional (v8). *Prepayments are paid by* — the type of each prepaid payment's event. Absent, `null` or anything else = invoice |
 | `notes` | string | optional |
 | `status` | `"active"` \| `"archived"` | optional |
 | `members` | array | see below |
@@ -207,8 +212,8 @@ with a warning.
 | `paid` | 0 \| 1 | |
 | `paid_date` | string \| null | `YYYY-MM-DD`; defaults to today when `paid` is 1 and it is empty, and is cleared when `paid` is 0 |
 | `notes` | string | optional |
-| `source_kind` | `"class"` \| `"student"` \| `"company"` \| null | where the amount was taken from; anything else becomes null |
-| `source_id` | integer \| null | id of that class / student / company |
+| `source_kind` | `"class"` \| `"student"` \| `"company"` \| `"credit"` \| null | where the amount was taken from; anything else becomes null. `credit` (v8) = a prepaid payment's event: it keeps its `type` instead of deriving rozliczenie from its class |
+| `source_id` | integer \| null | id of that class / student / company. **Always dropped for `credit`** — payment IDs of the exporting site mean nothing here, so an imported credit event is unlinked and its payment offers *Create draft* again |
 | `source_period` | string \| null | `YYYY-MM` the suggestion came from |
 | `is_draft` | 0 \| 1 | optional, default 0. A draft created from the Settlement page and not yet issued; left out of the Issued / Received / Outstanding totals. **Forced to 0** when `doc_number` is non-empty or `sent` / `paid` is 1 |
 | `lines_total` | number \| null | optional, default null. The settlement figure a draft was created from — used only to flag drift; never copied into `amount`. `null` for manual events (no drift check) |

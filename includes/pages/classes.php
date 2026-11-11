@@ -44,6 +44,8 @@ foreach ( $class_credits as $credit_list ) {
 	}
 }
 $credit_payers = MMR_Data::students_by_ids( $credit_payer_ids );
+// Each payment's event (2.10), one query: payment_id => event row.
+$credit_events = MMR_Data::credit_events_for_classes( wp_list_pluck( $classes, 'id' ) );
 
 // Filters echoed back by row-action forms so archiving keeps the current view.
 $filter_args = array( 's' => $search, 'status' => $status, 'client_type' => $type_filter );
@@ -128,7 +130,13 @@ if ( $company_filter ) {
 				}
 				$credit_json = array();
 				foreach ( isset( $class_credits[ (int) $class->id ] ) ? $class_credits[ (int) $class->id ] : array() as $credit ) {
+					$credit_event = isset( $credit_events[ $credit['id'] ] ) ? $credit_events[ $credit['id'] ] : null;
 					$credit_json[] = array(
+						'id'           => (int) $credit['id'],
+						'event_id'     => $credit_event ? (int) $credit_event->id : 0,
+						'event_type'   => $credit_event ? (string) $credit_event->type : '',
+						'event_draft'  => $credit_event ? (int) $credit_event->is_draft : 0,
+						'event_doc'    => $credit_event ? (string) $credit_event->doc_number : '',
 						'date'         => $credit['credit_date'],
 						'student_id'   => $credit['student_id'],
 						'student_name' => isset( $credit_payers[ $credit['student_id'] ] ) ? $credit_payers[ $credit['student_id'] ]->name : '',
@@ -145,6 +153,7 @@ if ( $company_filter ) {
 					'company'       => $company_name,
 					'settle_method' => $class->settle_method,
 					'pay_per_member' => (int) $class->pay_per_member,
+					'prepay_method' => MMR_Data::prepay_method( $class ),
 					'notes'         => $class->notes,
 					'status'        => $class->status,
 					'members'       => $member_json,
@@ -207,6 +216,16 @@ if ( $company_filter ) {
 	?>
 	<script type="application/json" id="mmr-company-map"><?php echo wp_json_encode( $company_map ); ?></script>
 
+	<?php
+	// Create draft (2.10): a standalone form outside the class modal (forms
+	// cannot nest). Each payment row's "Create draft" button targets it with
+	// form="mmr-credit-draft-form" and posts its own credit_id as name/value.
+	?>
+	<form method="post" id="mmr-credit-draft-form" hidden>
+		<?php wp_nonce_field( 'mmr_form' ); ?>
+		<input type="hidden" name="mmr_action" value="create_credit_draft">
+	</form>
+
 	<!-- Class modal -->
 	<div class="mmr-modal-overlay" id="mmr-class-modal" hidden>
 		<div class="mmr-modal" role="dialog" aria-modal="true" aria-labelledby="mmr-class-modal-title">
@@ -251,26 +270,52 @@ if ( $company_filter ) {
 						// rozliczenie. While hidden, admin.js disables every input in the box —
 						// credits_present included — so the server leaves stored payments untouched.
 						?>
+						<?php
+						$prepay_labels = array(
+							'invoice' => __( 'Invoice', 'mm-register' ),
+							'revolut' => __( 'Revolut', 'mm-register' ),
+							'cash'    => __( 'Cash', 'mm-register' ),
+						);
+						?>
 						<div class="mmr-field mmr-field--full mmr-credit-box" id="mmr-credit-box" hidden
 							data-today="<?php echo esc_attr( current_time( 'Y-m-d' ) ); ?>"
 							data-add-first="<?php esc_attr_e( '+ Add credit', 'mm-register' ); ?>"
-							data-add-more="<?php esc_attr_e( '+ Add top-up', 'mm-register' ); ?>">
+							data-add-more="<?php esc_attr_e( '+ Add top-up', 'mm-register' ); ?>"
+							data-type-labels="<?php echo esc_attr( wp_json_encode( $prepay_labels ) ); ?>"
+							<?php /* translators: %s: event type, e.g. "Invoice". */ ?>
+							data-ev-draft="<?php esc_attr_e( 'Draft %s', 'mm-register' ); ?>"
+							data-ev-create="<?php esc_attr_e( 'Create draft', 'mm-register' ); ?>"
+							data-ev-create-title="<?php esc_attr_e( 'Unsaved changes in this form are discarded.', 'mm-register' ); ?>"
+							data-ev-locked="<?php esc_attr_e( 'Delete the event first', 'mm-register' ); ?>">
 							<h3 class="mmr-credit-box__title"><?php esc_html_e( 'Prepaid credit', 'mm-register' ); ?></h3>
 							<p class="mmr-hint mmr-credit-hint"
 								data-pot="<?php esc_attr_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?>"
 								data-per-member="<?php esc_attr_e( 'Members pay separately, so each payment belongs to one member. Each member’s balance is what they paid minus their share of every lesson since their own first payment.', 'mm-register' ); ?>"><?php esc_html_e( 'The first payment is the credit; each later one is a top-up. Lessons from the first payment’s date onwards are drawn from the balance.', 'mm-register' ); ?></p>
 							<input type="hidden" name="credits_present" value="1">
+							<?php /* Prepayments are paid by (2.10): disabled with the rest of the box while it is hidden, so a hidden box never posts it. */ ?>
+							<div class="mmr-prepay-method" role="group" aria-labelledby="mmr-prepay-label">
+								<span class="mmr-prepay-method__label" id="mmr-prepay-label"><?php esc_html_e( 'Prepayments are paid by', 'mm-register' ); ?></span>
+								<div class="mmr-prepay-method__options">
+									<?php foreach ( $prepay_labels as $prepay_key => $prepay_label ) : ?>
+										<button type="button" class="mmr-prepay-option" data-prepay="<?php echo esc_attr( $prepay_key ); ?>" aria-pressed="<?php echo 'invoice' === $prepay_key ? 'true' : 'false'; ?>"><?php echo esc_html( $prepay_label ); ?></button>
+									<?php endforeach; ?>
+								</div>
+								<input type="hidden" name="prepay_method" value="invoice" class="mmr-prepay-input">
+								<span class="mmr-hint"><?php esc_html_e( 'Each payment makes a draft event of this type.', 'mm-register' ); ?></span>
+							</div>
 							<div class="mmr-credit-row mmr-credit-row--head" aria-hidden="true">
 								<span><?php esc_html_e( 'Date', 'mm-register' ); ?></span>
 								<span class="mmr-credit-col-payer"><?php esc_html_e( 'Paid by', 'mm-register' ); ?></span>
 								<span><?php esc_html_e( 'Amount (zł)', 'mm-register' ); ?></span>
 								<span><?php esc_html_e( 'Note', 'mm-register' ); ?></span>
+								<span><?php esc_html_e( 'Event', 'mm-register' ); ?></span>
 								<span></span>
 							</div>
 							<div id="mmr-credit-rows"></div>
 							<p><button type="button" class="button" id="mmr-add-credit"><?php esc_html_e( '+ Add credit', 'mm-register' ); ?></button></p>
 							<template id="mmr-credit-row-template">
 								<div class="mmr-credit-row">
+									<input type="hidden" name="credit_id[]" class="mmr-credit-id" value="0">
 									<input type="date" name="credit_date[]" class="mmr-credit-date" aria-label="<?php esc_attr_e( 'Payment date', 'mm-register' ); ?>">
 									<?php /* Hidden but never disabled outside per-member mode, so the stored payer still posts (switching modes never rewrites it). */ ?>
 									<select name="credit_student[]" class="mmr-credit-student mmr-credit-col-payer" aria-label="<?php esc_attr_e( 'Paid by', 'mm-register' ); ?>"
@@ -279,6 +324,8 @@ if ( $company_filter ) {
 									</select>
 									<input type="text" inputmode="decimal" name="credit_amount[]" class="mmr-credit-amount" aria-label="<?php esc_attr_e( 'Payment amount (zł)', 'mm-register' ); ?>">
 									<input type="text" maxlength="190" name="credit_note[]" class="mmr-credit-note" aria-label="<?php esc_attr_e( 'Payment note', 'mm-register' ); ?>">
+									<?php /* Event (2.10): admin.js replaces this for a saved payment — Create draft, or its event's chip. */ ?>
+									<span class="mmr-credit-event"><span class="mmr-muted"><?php esc_html_e( 'Draft on save', 'mm-register' ); ?></span></span>
 									<button type="button" class="button-link mmr-remove-credit" aria-label="<?php esc_attr_e( 'Remove payment', 'mm-register' ); ?>">✕</button>
 								</div>
 							</template>

@@ -243,6 +243,9 @@ class MMR_Import {
 				'company_id'    => $company_id,
 				// Absent in v4 exports — 0 keeps the class billed as one line.
 				'pay_per_member' => empty( $class['pay_per_member'] ) ? 0 : 1,
+				// Absent before v8 exports — NULL reads as invoice. save_class()
+				// whitelists it; anything unknown is stored as NULL.
+				'prepay_method' => isset( $class['prepay_method'] ) ? sanitize_text_field( (string) $class['prepay_method'] ) : null,
 				'notes'         => isset( $class['notes'] ) ? sanitize_textarea_field( $class['notes'] ) : '',
 				'status'        => ( isset( $class['status'] ) && 'archived' === $class['status'] ) ? 'archived' : 'active',
 			) );
@@ -342,6 +345,17 @@ class MMR_Import {
 				continue; // No payer at all — skipped, as the dry run warned.
 			}
 
+			// A prepaid payment's event (v8 / 2.10) points at a payment ID of the
+			// exporting site, which means nothing here — payments are re-created
+			// with new IDs above. So source_id is always dropped while
+			// source_kind stays 'credit', which keeps its stored type (invoice /
+			// revolut / cash) instead of re-deriving rozliczenie from the class.
+			// Accepted trade-off: an imported credit event is unlinked, so its
+			// payment offers "Create draft" again.
+			if ( isset( $event['source_kind'] ) && 'credit' === strtolower( trim( (string) $event['source_kind'] ) ) ) {
+				$event['source_id'] = 0;
+			}
+
 			$event['class_ids'] = $class_ids;
 			$event['who_text'] = $who_text;
 			MMR_Data::save_event( $event );
@@ -361,7 +375,7 @@ class MMR_Import {
 		global $wpdb;
 
 		$out = array(
-			'version'        => 7,
+			'version'        => 8,
 			'exported_at'    => current_time( 'mysql' ),
 			'plugin_version' => MMR_VERSION,
 			'companies'      => array(),
@@ -432,6 +446,8 @@ class MMR_Import {
 				'company_ref'   => ( $c->company_id && isset( $company_ref[ (int) $c->company_id ] ) ) ? $company_ref[ (int) $c->company_id ] : null,
 				'settle_method' => $c->settle_method,
 				'pay_per_member' => (int) $c->pay_per_member,
+				// v8 (2.10): NULL = invoice.
+				'prepay_method' => ( null === $c->prepay_method || '' === $c->prepay_method ) ? null : (string) $c->prepay_method,
 				'notes'         => $c->notes,
 				'status'        => $c->status,
 				'members'       => $members,

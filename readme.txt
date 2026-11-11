@@ -3,7 +3,7 @@ Contributors: mariuszmirecki
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.1
-Stable tag: 2.9.0
+Stable tag: 2.10.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -43,6 +43,18 @@ Pure PHP + vanilla JavaScript. No jQuery, no external frameworks.
    first). See docs/import-format.md.
 
 == Changelog ==
+
+= 2.10.0 =
+* Prepaid payments become events: a rozliczenie class gets "Prepayments are
+  paid by" (Invoice / Revolut / Cash) in its Prepaid credit box, and every new
+  payment (class form or Settlement top-up) creates a draft event of that type,
+  issued by hand in Events. Existing payments offer Create draft. A draft
+  follows its payment; an issued event locks the payment's date, amount and
+  payer. Monthly rozliczenie events and balances are unchanged.
+* Payments keep their IDs across class saves.
+* DB version 2.7 adds mmr_classes.prepay_method only.
+* Export version 8 (classes[].prepay_method, credit event source); version 7
+  files still import.
 
 = 2.9.0 =
 * Per-member prepaid credit: in a rozliczenie class with "Members pay

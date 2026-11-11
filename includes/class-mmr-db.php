@@ -208,12 +208,16 @@ class MMR_DB {
 		// `pay_per_member` (v2.4): each member of the class is billed on their
 		// own — the Settlement page offers one billable line per member instead
 		// of one for the class. Default 0 keeps every existing class as it was.
+		// `prepay_method` (v2.7 / plugin 2.10): how a rozliczenie class's
+		// prepayments are paid — invoice|revolut|cash; NULL = invoice. No data
+		// migration: existing rows stay NULL.
 		$sql[] = "CREATE TABLE {$classes} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			name VARCHAR(190) NOT NULL,
 			fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 			client_type VARCHAR(60) NULL DEFAULT NULL,
 			settle_method VARCHAR(60) NULL DEFAULT NULL,
+			prepay_method VARCHAR(10) NULL DEFAULT NULL,
 			company_id BIGINT UNSIGNED NULL DEFAULT NULL,
 			pay_per_member TINYINT(1) NOT NULL DEFAULT 0,
 			notes TEXT NULL,

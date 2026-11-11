@@ -279,6 +279,16 @@ class MMR_Data {
 		);
 		$formats = array( '%s', '%f', '%s', '%s', null === $company_id ? null : '%d', '%d', '%s', '%s' );
 
+		// 2.10: written only when the caller passes it, so writers that know
+		// nothing about it (quick-add, a form with the credit box hidden) leave
+		// the stored value alone. Anything outside the whitelist stores NULL
+		// (= invoice).
+		if ( array_key_exists( 'prepay_method', $data ) ) {
+			$method = strtolower( trim( (string) $data['prepay_method'] ) );
+			$row['prepay_method'] = in_array( $method, self::prepay_methods(), true ) ? $method : null;
+			$formats[] = null === $row['prepay_method'] ? null : '%s';
+		}
+
 		if ( $id ) {
 			$wpdb->update( $table, $row, array( 'id' => $id ), $formats, array( '%d' ) );
 			return $id;
@@ -421,27 +431,99 @@ class MMR_Data {
 	}
 
 	/**
-	 * Replace the payment set of a class (delete then insert), like
-	 * set_members(). Rows are already validated by the caller; an empty list
-	 * deletes every payment.
+	 * Sync the payment set of a class with the posted rows (2.10).
+	 *
+	 * Payments keep their IDs across saves, because a payment's event
+	 * (events.source_kind = 'credit', source_id = payment ID) points at it:
+	 * - a row whose `id` is a payment of this class updates that payment;
+	 * - a row with no / an unknown / a foreign / an already-used `id` is
+	 *   inserted as a new payment;
+	 * - stored payments not posted are deleted. An empty list deletes every
+	 *   payment — that is what removing every row means.
+	 *
+	 * Rows are already validated by the caller, including the issued-event
+	 * locks (see MMR_Admin::parse_credit_rows()). As a last line of defence a
+	 * payment whose event is issued is never deleted here and only its note
+	 * may change: an issued document is a snapshot of that payment.
 	 *
 	 * @param int   $class_id Class ID.
-	 * @param array $rows     List of [ date (Y-m-d), amount (float złoty), note,
-	 *                        student_id (optional; 0/empty stores NULL) ].
+	 * @param array $rows     List of [ id (optional, 0 = new), date (Y-m-d),
+	 *                        amount (float złoty), note, student_id (optional;
+	 *                        0/empty stores NULL) ].
+	 * @return array [ inserted => int[], updated => int[], deleted => int[] ].
+	 *               `updated` lists only payments whose stored values changed.
 	 */
 	public static function set_class_credits( $class_id, array $rows ) {
 		global $wpdb;
+		$class_id = (int) $class_id;
 		$t = MMR_DB::table( 'class_credits' );
-		$wpdb->delete( $t, array( 'class_id' => (int) $class_id ), array( '%d' ) );
-		foreach ( $rows as $row ) {
-			self::insert_credit(
-				$class_id,
-				$row['date'],
-				$row['amount'],
-				isset( $row['note'] ) ? $row['note'] : '',
-				isset( $row['student_id'] ) ? $row['student_id'] : 0
-			);
+		$result = array( 'inserted' => array(), 'updated' => array(), 'deleted' => array() );
+
+		$stored = self::credits_for_classes( array( $class_id ) );
+		$stored_by_id = array();
+		foreach ( isset( $stored[ $class_id ] ) ? $stored[ $class_id ] : array() as $credit ) {
+			$stored_by_id[ $credit['id'] ] = $credit;
 		}
+		$events = $stored_by_id ? self::credit_events( $class_id ) : array();
+
+		$kept = array();
+		foreach ( $rows as $row ) {
+			$id = isset( $row['id'] ) ? absint( $row['id'] ) : 0;
+			$note = mb_substr( isset( $row['note'] ) ? (string) $row['note'] : '', 0, 190 );
+			$student_id = isset( $row['student_id'] ) ? absint( $row['student_id'] ) : 0;
+
+			if ( ! $id || ! isset( $stored_by_id[ $id ] ) || isset( $kept[ $id ] ) ) {
+				$new_id = self::insert_credit( $class_id, $row['date'], $row['amount'], $note, $student_id );
+				if ( $new_id ) {
+					$result['inserted'][] = $new_id;
+				}
+				continue;
+			}
+
+			$kept[ $id ] = true;
+			$old = $stored_by_id[ $id ];
+			$issued = isset( $events[ $id ] ) && ! (int) $events[ $id ]->is_draft;
+			if ( $issued ) {
+				// Locked: keep the snapshot's date, amount and payer.
+				$row['date'] = $old['credit_date'];
+				$row['amount'] = $old['amount'];
+				$student_id = (int) $old['student_id'];
+			}
+			// String, so no float ever reaches the DECIMAL column.
+			$amount = number_format( (float) $row['amount'], 2, '.', '' );
+			$changed = $row['date'] !== $old['credit_date']
+				|| self::to_grosze( $amount ) !== self::to_grosze( $old['amount'] )
+				|| $note !== $old['note']
+				|| $student_id !== (int) $old['student_id'];
+			if ( ! $changed ) {
+				continue;
+			}
+			$wpdb->update(
+				$t,
+				array(
+					'student_id'  => $student_id ? $student_id : null,
+					'credit_date' => $row['date'],
+					'amount'      => $amount,
+					'note'        => '' === $note ? null : $note,
+				),
+				array( 'id' => $id, 'class_id' => $class_id ),
+				array( $student_id ? '%d' : null, '%s', '%s', '' === $note ? null : '%s' ),
+				array( '%d', '%d' )
+			);
+			$result['updated'][] = $id;
+		}
+
+		foreach ( array_keys( $stored_by_id ) as $id ) {
+			if ( isset( $kept[ $id ] ) ) {
+				continue;
+			}
+			if ( isset( $events[ $id ] ) && ! (int) $events[ $id ]->is_draft ) {
+				continue; // An issued event's payment is never removed.
+			}
+			$wpdb->delete( $t, array( 'id' => $id, 'class_id' => $class_id ), array( '%d', '%d' ) );
+			$result['deleted'][] = (int) $id;
+		}
+		return $result;
 	}
 
 	/**
@@ -513,7 +595,309 @@ class MMR_Data {
 		if ( ! $id ) {
 			return new WP_Error( 'mmr_credit_db', __( 'The payment could not be saved.', 'mm-register' ) );
 		}
+		// 2.10: every new payment gets its draft event. A failure here does
+		// not undo the payment — the class form then offers Create draft.
+		self::create_credit_draft( $id );
 		return $id;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Prepaid payments → events (2.10)
+	 *
+	 * How lessons are accounted is unchanged (settle_method = rozliczenie,
+	 * monthly rozliczenie events). How the *prepayment* is paid is new: each
+	 * payment can have one event of the class's prepay method, linked by
+	 * events.source_kind = 'credit', source_id = class_credits.id,
+	 * source_period NULL, lines_total NULL. It is always created as a draft
+	 * and issued by hand in Events like every other draft. A draft follows its
+	 * payment; an issued event is a snapshot and locks the payment's date,
+	 * amount and payer.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * How prepayments may be paid.
+	 *
+	 * @return string[]
+	 */
+	public static function prepay_methods() {
+		return array( 'invoice', 'revolut', 'cash' );
+	}
+
+	/**
+	 * A class's prepay method; NULL / anything unknown reads as invoice.
+	 *
+	 * @param object|null $class Class row.
+	 * @return string invoice|revolut|cash
+	 */
+	public static function prepay_method( $class ) {
+		$method = ( $class && isset( $class->prepay_method ) ) ? strtolower( trim( (string) $class->prepay_method ) ) : '';
+		return in_array( $method, self::prepay_methods(), true ) ? $method : 'invoice';
+	}
+
+	/**
+	 * Collapse event rows into payment_id => event. Should a payment ever have
+	 * two events, an issued one wins (it is the one that locks the payment),
+	 * then the oldest.
+	 *
+	 * @param array $rows Event rows ordered by id.
+	 * @return array
+	 */
+	protected static function map_credit_events( $rows ) {
+		$map = array();
+		foreach ( (array) $rows as $row ) {
+			$cid = (int) $row->source_id;
+			if ( ! isset( $map[ $cid ] ) || ( (int) $map[ $cid ]->is_draft && ! (int) $row->is_draft ) ) {
+				$map[ $cid ] = $row;
+			}
+		}
+		return $map;
+	}
+
+	/**
+	 * Events of the payments of several classes, in one query.
+	 *
+	 * @param int[] $class_ids Class IDs.
+	 * @return array payment_id => event row.
+	 */
+	public static function credit_events_for_classes( array $class_ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $class_ids );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$e = MMR_DB::table( 'events' );
+		$t = MMR_DB::table( 'class_credits' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT e.* FROM {$e} e
+			 JOIN {$t} cc ON cc.id = e.source_id
+			 WHERE e.source_kind = 'credit' AND cc.class_id IN ({$placeholders})
+			 ORDER BY e.id ASC",
+			$ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		return self::map_credit_events( $rows );
+	}
+
+	/**
+	 * Events of one class's payments.
+	 *
+	 * @param int $class_id Class ID.
+	 * @return array payment_id => event row.
+	 */
+	public static function credit_events( $class_id ) {
+		return self::credit_events_for_classes( array( (int) $class_id ) );
+	}
+
+	/**
+	 * Events pointing at given payment IDs, whether or not the payments still
+	 * exist (used after a delete, when the join above no longer finds them).
+	 *
+	 * @param int[] $credit_ids Payment IDs.
+	 * @return array payment_id => event row.
+	 */
+	protected static function events_for_credit_ids( array $credit_ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $credit_ids );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$e = MMR_DB::table( 'events' );
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT * FROM {$e} WHERE source_kind = 'credit' AND source_id IN ({$placeholders}) ORDER BY id ASC",
+			$ids
+		) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		return self::map_credit_events( $rows );
+	}
+
+	/**
+	 * One payment row.
+	 *
+	 * @param int $credit_id Payment ID.
+	 * @return object|null
+	 */
+	public static function credit_row( $credit_id ) {
+		global $wpdb;
+		$t = MMR_DB::table( 'class_credits' );
+		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$t} WHERE id = %d", $credit_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+	}
+
+	/**
+	 * The Who free text of a payment's event: the payer's name when the
+	 * payment has one (as Settlement's per-student drafts do), else ''.
+	 *
+	 * @param int $student_id Payer, 0 when none.
+	 * @return string
+	 */
+	protected static function credit_who_text( $student_id ) {
+		$student_id = (int) $student_id;
+		if ( ! $student_id ) {
+			return '';
+		}
+		$students = self::students_by_ids( array( $student_id ) );
+		return isset( $students[ $student_id ] ) ? (string) $students[ $student_id ]->name : '';
+	}
+
+	/**
+	 * Create the draft event of one payment.
+	 *
+	 * @param int $credit_id Payment ID.
+	 * @return int|WP_Error New event ID.
+	 */
+	public static function create_credit_draft( $credit_id ) {
+		$credit = self::credit_row( (int) $credit_id );
+		if ( ! $credit ) {
+			return new WP_Error( 'mmr_credit_unknown', __( 'That payment no longer exists.', 'mm-register' ) );
+		}
+		$class = self::class_row( (int) $credit->class_id );
+		if ( ! $class || 'rozliczenie' !== self::event_type_hint( $class->settle_method ) ) {
+			return new WP_Error( 'mmr_credit_method', __( 'Prepaid credit is only for rozliczenie classes.', 'mm-register' ) );
+		}
+		if ( self::events_for_credit_ids( array( (int) $credit->id ) ) ) {
+			return new WP_Error( 'mmr_credit_has_event', __( 'This payment already has an event.', 'mm-register' ) );
+		}
+
+		list( $year, $month, $day ) = explode( '-', $credit->credit_date );
+		$notes = sprintf(
+			/* translators: %s: payment date, e.g. 12.11.2026. */
+			__( 'Prepaid credit · %s', 'mm-register' ),
+			$day . '.' . $month . '.' . $year
+		);
+		if ( '' !== trim( (string) $credit->note ) ) {
+			$notes .= ' · ' . $credit->note;
+		}
+
+		// The type is passed explicitly; resolve_event_who() keeps it for a
+		// credit event instead of deriving rozliczenie from the class.
+		$id = self::save_event( array(
+			'type'          => self::prepay_method( $class ),
+			'issue_date'    => current_time( 'Y-m-d' ),
+			'class_ids'     => array( (int) $class->id ),
+			'who_text'      => self::credit_who_text( $credit->student_id ),
+			'amount'        => $credit->amount,
+			'notes'         => $notes,
+			'source_kind'   => 'credit',
+			'source_id'     => (int) $credit->id,
+			'source_period' => null,
+			'lines_total'   => null,
+			'is_draft'      => 1,
+		) );
+		if ( ! $id ) {
+			return new WP_Error( 'mmr_save_failed', __( 'The event could not be saved.', 'mm-register' ) );
+		}
+		return $id;
+	}
+
+	/**
+	 * Check posted payment rows against the issued-event locks, before
+	 * anything is saved (a refused form saves nothing).
+	 *
+	 * A payment whose event is issued may not be removed, and its date,
+	 * amount and payer may not change; its note may. Deleting the event in
+	 * Events unlocks the payment.
+	 *
+	 * @param int   $class_id Class ID (0 for a new class: nothing to lock).
+	 * @param array $rows     Parsed rows: [ id, date, amount (float), note,
+	 *                        student_id ] — ids already limited to this class.
+	 * @return true|WP_Error
+	 */
+	public static function check_credit_locks( $class_id, array $rows ) {
+		$class_id = (int) $class_id;
+		if ( ! $class_id ) {
+			return true;
+		}
+		$events = self::credit_events( $class_id );
+		if ( empty( $events ) ) {
+			return true;
+		}
+		$stored = self::credits_for_classes( array( $class_id ) );
+		$posted = array();
+		foreach ( $rows as $row ) {
+			$id = isset( $row['id'] ) ? (int) $row['id'] : 0;
+			if ( $id && ! isset( $posted[ $id ] ) ) {
+				$posted[ $id ] = $row;
+			}
+		}
+		foreach ( isset( $stored[ $class_id ] ) ? $stored[ $class_id ] : array() as $credit ) {
+			$id = (int) $credit['id'];
+			if ( ! isset( $events[ $id ] ) || (int) $events[ $id ]->is_draft ) {
+				continue;
+			}
+			if ( ! isset( $posted[ $id ] ) ) {
+				return new WP_Error( 'mmr_credit_locked_remove', __( 'A payment with an issued event can\'t be removed. Delete the event first.', 'mm-register' ) );
+			}
+			$row = $posted[ $id ];
+			$sid = isset( $row['student_id'] ) ? (int) $row['student_id'] : 0;
+			if ( $row['date'] !== $credit['credit_date']
+				|| self::to_grosze( $row['amount'] ) !== self::to_grosze( $credit['amount'] )
+				|| $sid !== (int) $credit['student_id'] ) {
+				return new WP_Error( 'mmr_credit_locked_change', __( 'This payment has an issued event — its date, amount and payer are locked.', 'mm-register' ) );
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Bring payment events in line after a class-form save.
+	 *
+	 * - inserted payment → a new draft;
+	 * - updated payment with a draft → the draft takes the payment's amount
+	 *   and payer (its type, date, notes and number stay); with an issued
+	 *   event → nothing (the locks already refused any locked change);
+	 * - deleted payment with a draft → the draft is deleted.
+	 *
+	 * @param int   $class_id    Class ID.
+	 * @param array $sync_result set_class_credits() result.
+	 * @param array $old_rows    The class's payments before the save
+	 *                           (credits_for_classes() entries).
+	 */
+	public static function sync_credit_drafts( $class_id, $sync_result, $old_rows = array() ) {
+		$class_id = (int) $class_id;
+
+		foreach ( $sync_result['inserted'] as $credit_id ) {
+			self::create_credit_draft( $credit_id );
+		}
+
+		if ( $sync_result['updated'] ) {
+			$old_by_id = array();
+			foreach ( (array) $old_rows as $old ) {
+				$old_by_id[ (int) $old['id'] ] = $old;
+			}
+			$events = self::credit_events( $class_id );
+			foreach ( $sync_result['updated'] as $credit_id ) {
+				if ( ! isset( $events[ $credit_id ] ) || ! (int) $events[ $credit_id ]->is_draft ) {
+					continue;
+				}
+				$credit = self::credit_row( $credit_id );
+				if ( ! $credit ) {
+					continue;
+				}
+				// Only amount and payer flow into the draft; a date or note
+				// edit leaves it untouched.
+				if ( isset( $old_by_id[ $credit_id ] )
+					&& self::to_grosze( $old_by_id[ $credit_id ]['amount'] ) === self::to_grosze( $credit->amount )
+					&& (int) $old_by_id[ $credit_id ]['student_id'] === (int) $credit->student_id ) {
+					continue;
+				}
+				$event = $events[ $credit_id ];
+				$data = (array) $event;
+				$data['amount'] = $credit->amount;
+				$data['who_text'] = self::credit_who_text( $credit->student_id );
+				$data['class_ids'] = self::event_class_ids( (int) $event->id );
+				if ( empty( $data['class_ids'] ) ) {
+					$data['class_ids'] = array( $class_id );
+				}
+				self::save_event( $data, (int) $event->id );
+			}
+		}
+
+		if ( $sync_result['deleted'] ) {
+			foreach ( self::events_for_credit_ids( $sync_result['deleted'] ) as $event ) {
+				if ( (int) $event->is_draft ) {
+					self::delete_event( (int) $event->id );
+				}
+			}
+		}
 	}
 
 	/**
@@ -1658,7 +2042,8 @@ class MMR_Data {
 	 * @return string[]
 	 */
 	public static function event_source_kinds() {
-		return array( 'class', 'student', 'company' );
+		// `credit` (2.10): a prepaid payment's event, source_id = class_credits.id.
+		return array( 'class', 'student', 'company', 'credit' );
 	}
 
 	/* --- Who: classes + free text -------------------------------------- */
@@ -1865,6 +2250,14 @@ class MMR_Data {
 
 		$data['class_ids'] = $verified;
 		$data['payer_label'] = self::compose_payer_label( $names, isset( $data['who_text'] ) ? $data['who_text'] : '' );
+
+		// A prepaid payment's event (2.10) keeps the type it was given — the
+		// class's prepay method — and never takes the rozliczenie its class
+		// derives: the payment is money paid, not lessons drawn down.
+		$source_kind = isset( $data['source_kind'] ) ? strtolower( trim( (string) $data['source_kind'] ) ) : '';
+		if ( 'credit' === $source_kind ) {
+			return $data;
+		}
 
 		$derived = self::derive_event_type( $verified, $map );
 		if ( $derived['resolved'] ) {
@@ -2676,6 +3069,9 @@ class MMR_Data {
 		}
 		if ( ! (int) $event->is_draft ) {
 			return new WP_Error( 'mmr_not_draft', __( 'This event has been issued — its amount is locked.', 'mm-register' ) );
+		}
+		if ( 'credit' === $event->source_kind ) {
+			return new WP_Error( 'mmr_credit_draft', __( 'This draft comes from a prepaid payment, not from Settlement.', 'mm-register' ) );
 		}
 		return $event;
 	}

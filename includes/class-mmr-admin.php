@@ -130,6 +130,7 @@ class MMR_Admin {
 			'settle_create_remaining' => 'post_settle_create_remaining',
 			'settle_event_action'   => 'post_settle_event_action',
 			'settle_add_credit'     => 'post_settle_add_credit',
+			'create_credit_draft'   => 'post_create_credit_draft',
 			'import_data'           => 'post_import_data',
 			'export_data'           => 'post_export_data',
 			'wipe_data'             => 'post_wipe_data',
@@ -287,6 +288,12 @@ class MMR_Admin {
 		if ( '' === $data['name'] ) {
 			$this->redirect( 'classes', 'Name is required.', array(), true );
 		}
+		// Prepayments are paid by (2.10): posted only while the Prepaid credit
+		// box is shown (it is disabled with the box), so a hidden box leaves
+		// the stored value alone. save_class() whitelists it.
+		if ( isset( $_POST['prepay_method'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			$data['prepay_method'] = $this->text( 'prepay_method' );
+		}
 
 		// Members repeater — parsed first, since the credit rows are checked
 		// against the posted members; saved after the class below.
@@ -316,14 +323,23 @@ class MMR_Admin {
 			$member_ids = array_values( array_unique( wp_list_pluck( $members, 'student_id' ) ) );
 			$per_member = $data['pay_per_member'] && count( $member_ids ) >= 2;
 			$credits = $this->parse_credit_rows( $id, $member_ids, $per_member );
+			// Issued-event locks (2.10), checked before anything is saved.
+			$locked = MMR_Data::check_credit_locks( $id, $credits );
+			if ( is_wp_error( $locked ) ) {
+				$this->redirect( 'classes', $locked->get_error_message(), array(), true );
+			}
 		}
 
 		$class_id = MMR_Data::save_class( $data, $id );
 		MMR_Data::set_members( $class_id, $members );
 
-		// An empty list deletes every payment — that is what removing every row means.
+		// An empty list deletes every payment — that is what removing every row
+		// means. Payments keep their IDs (2.10); their draft events follow.
 		if ( null !== $credits ) {
-			MMR_Data::set_class_credits( $class_id, $credits );
+			$old_rows = MMR_Data::credits_for_classes( array( $class_id ) );
+			$old_rows = isset( $old_rows[ $class_id ] ) ? $old_rows[ $class_id ] : array();
+			$result = MMR_Data::set_class_credits( $class_id, $credits );
+			MMR_Data::sync_credit_drafts( $class_id, $result, $old_rows );
 		}
 		$this->redirect( 'classes', 'saved' );
 	}
@@ -341,22 +357,28 @@ class MMR_Admin {
 	 * a stored payer). In per-member mode every kept row needs one; in a pot
 	 * class anyone else is stored as NULL.
 	 *
+	 * Payment IDs (2.10): each row posts `credit_id[]` (0 for a new row). An
+	 * ID that is not a payment of this class is treated as 0 (new).
+	 *
 	 * @param int   $class_id   Existing class ID, or 0 for a new class.
 	 * @param int[] $member_ids Posted member student IDs.
 	 * @param bool  $per_member Per-member mode, from the posted data.
-	 * @return array List of [ date, amount (float), note, student_id ].
+	 * @return array List of [ id, date, amount (float), note, student_id ].
 	 */
 	protected function parse_credit_rows( $class_id, array $member_ids, $per_member ) {
 		$dates    = isset( $_POST['credit_date'] ) ? (array) wp_unslash( $_POST['credit_date'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
 		$amounts  = isset( $_POST['credit_amount'] ) ? (array) wp_unslash( $_POST['credit_amount'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
 		$notes    = isset( $_POST['credit_note'] ) ? (array) wp_unslash( $_POST['credit_note'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
 		$students = isset( $_POST['credit_student'] ) ? (array) wp_unslash( $_POST['credit_student'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+		$ids      = isset( $_POST['credit_id'] ) ? (array) wp_unslash( $_POST['credit_id'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
 
 		$allowed = array_fill_keys( array_map( 'intval', $member_ids ), true );
+		$own_ids = array();
 		if ( $class_id ) {
 			$stored = MMR_Data::credits_for_classes( array( $class_id ) );
 			$stored_ids = array();
 			foreach ( isset( $stored[ $class_id ] ) ? $stored[ $class_id ] : array() as $credit ) {
+				$own_ids[ (int) $credit['id'] ] = true;
 				if ( $credit['student_id'] ) {
 					$stored_ids[] = $credit['student_id'];
 				}
@@ -388,6 +410,8 @@ class MMR_Admin {
 				$this->redirect( 'classes', __( 'Choose who paid each payment.', 'mm-register' ), array(), true );
 			}
 			$row['student_id'] = $sid;
+			$cid = isset( $ids[ $i ] ) ? absint( $ids[ $i ] ) : 0;
+			$row['id'] = isset( $own_ids[ $cid ] ) ? $cid : 0;
 			$rows[] = $row;
 		}
 		return $rows;
@@ -637,6 +661,7 @@ class MMR_Admin {
 		}
 		$first = empty( $existing );
 
+		// add_class_credit() also creates the payment's draft event (2.10).
 		$result = MMR_Data::add_class_credit( $class_id, $row['date'], $amount, $row['note'], $student_id );
 		if ( is_wp_error( $result ) ) {
 			$this->redirect( 'settlement', $result->get_error_message(), $back, true );
@@ -658,6 +683,22 @@ class MMR_Admin {
 		}
 		wp_safe_redirect( mmr_page_url( 'settlement', array_merge( $back, array( 'mmr_notice' => $message ) ) ) . '#mmr-credit-panel' );
 		exit;
+	}
+
+	/**
+	 * Create the draft event of one existing payment (class form, 2.10).
+	 * Capability and nonce are checked by handle_post(). On success the
+	 * draft opens in the Events edit modal, ready for its number.
+	 */
+	protected function post_create_credit_draft() {
+		$credit_id = isset( $_POST['credit_id'] ) ? absint( $_POST['credit_id'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification
+		$result = MMR_Data::create_credit_draft( $credit_id );
+		if ( is_wp_error( $result ) ) {
+			$this->redirect( 'classes', $result->get_error_message(), array(), true );
+		}
+		$event = MMR_Data::event( $result );
+		$year = $event ? (int) substr( $event->issue_date, 0, 4 ) : (int) current_time( 'Y' );
+		$this->redirect( 'events', __( 'Draft event created.', 'mm-register' ), array( 'year' => $year, 'edit' => (int) $result ) );
 	}
 
 	/** Act on one event from the Settlement page's event panel. */

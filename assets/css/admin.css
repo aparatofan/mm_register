@@ -787,7 +787,7 @@
 .mmr-credit-box[hidden] { display: none; }
 .mmr-credit-box .mmr-credit-box__title { margin: 4px 0 0; font-size: 14px; }
 .mmr-credit-box .mmr-hint { margin: 0; }
-.mmr-credit-row { display: grid; grid-template-columns: 150px 120px minmax(0, 1fr) 32px; gap: 12px; align-items: center; margin-bottom: 8px; }
+.mmr-credit-row { display: grid; grid-template-columns: 150px 120px minmax(0, 1fr) minmax(0, 150px) 32px; gap: 12px; align-items: center; margin-bottom: 8px; }
 .mmr-credit-row > input {
 	width: 100%;
 	max-width: 100%;
@@ -799,8 +799,49 @@
 /* Paid by (2.9): only in per-member mode. Hidden, never disabled, outside it. */
 .mmr-credit-box .mmr-credit-col-payer { display: none; }
 .mmr-credit-box.is-per-member .mmr-credit-col-payer { display: block; }
-.mmr-credit-box.is-per-member .mmr-credit-row { grid-template-columns: 150px minmax(0, 180px) 120px minmax(0, 1fr) 32px; }
+.mmr-credit-box.is-per-member .mmr-credit-row { grid-template-columns: 150px minmax(0, 180px) 120px minmax(0, 1fr) minmax(0, 150px) 32px; }
 .mmr-credit-row > select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
+
+/* Prepaid payments → events (2.10): "Prepayments are paid by" toggle and
+   the Event column (Draft on save / Create draft / draft / issued chip). */
+.mmr-prepay-method { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 4px 0 8px; }
+.mmr-prepay-method__label { font-size: 13px; font-weight: 600; }
+.mmr-prepay-method__options { display: inline-flex; gap: 8px; }
+.mmr-prepay-method .mmr-hint { flex-basis: 100%; }
+.mmr-prepay-option {
+	padding: 4px 14px;
+	border: 1px solid var(--mmr-border);
+	border-radius: 12px;
+	background: #fff;
+	color: #1d2327;
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	cursor: pointer;
+}
+.mmr-prepay-option:hover { border-color: var(--mmr-border-strong); }
+.mmr-prepay-option:focus-visible { outline: 2px solid var(--mmr-accent); outline-offset: 1px; }
+.mmr-prepay-option[aria-pressed="true"] { border-color: var(--mmr-accent); background: #EDF4FF; color: var(--mmr-accent); }
+.mmr-credit-event { min-width: 0; font-size: 12px; }
+.mmr-credit-chip {
+	display: inline-block;
+	max-width: 100%;
+	box-sizing: border-box;
+	padding: 1px 8px;
+	border: 1px solid #D0D5DD;
+	border-radius: 999px;
+	font-size: 12px;
+	line-height: 18px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: middle;
+}
+.mmr-credit-chip--draft { background: #FFF6ED; color: #B54708; border-color: #F9DBAF; }
+.mmr-credit-chip--issued { background: #ECFDF3; color: #16803C; border-color: #ABEFC6; }
+.mmr-credit-row > input[readonly] { background: var(--mmr-bg-soft); color: var(--mmr-muted); }
+.mmr-remove-credit:disabled { opacity: .4; cursor: not-allowed; }
+.mmr-events .mmr-event-sub { display: block; font-size: 12px; }
 
 @media (max-width: 640px) {
 	.mmr-form-grid  { grid-template-columns: minmax(0, 1fr); }
